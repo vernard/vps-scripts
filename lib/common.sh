@@ -261,7 +261,11 @@ find_sqlite_service() {
             /^services:[[:space:]]*$/ { in_services = 1; next }
             /^[a-zA-Z]/ && !/^[[:space:]]/ { in_services = 0 }
             in_services && /^[[:space:]]+[a-zA-Z0-9_-]+:[[:space:]]*$/ {
-                current_service = $1; gsub(/:/, "", current_service)
+                svc = $1; gsub(/:/, "", svc)
+                # Skip common property keys - only match actual service names
+                if (svc !~ /^(volumes|image|environment|depends_on|labels|networks|command|build|ports|expose|healthcheck|restart|container_name|env_file|working_dir|user|entrypoint|stdin_open|tty|privileged|devices|dns|logging|configs|secrets|deploy)$/) {
+                    current_service = svc
+                }
             }
             /volumes:/ && current_service { in_volumes = 1; next }
             in_volumes && /^[[:space:]]*-/ {
@@ -293,7 +297,11 @@ find_storage_volumes() {
             /^services:[[:space:]]*$/ { in_services = 1; next }
             /^[a-zA-Z]/ && !/^[[:space:]]/ { in_services = 0 }
             in_services && /^[[:space:]]+[a-zA-Z0-9_-]+:[[:space:]]*$/ {
-                current_service = $1; gsub(/:/, "", current_service)
+                svc = $1; gsub(/:/, "", svc)
+                # Skip common property keys - only match actual service names
+                if (svc !~ /^(volumes|image|environment|depends_on|labels|networks|command|build|ports|expose|healthcheck|restart|container_name|env_file|working_dir|user|entrypoint|stdin_open|tty|privileged|devices|dns|logging|configs|secrets|deploy)$/) {
+                    current_service = svc
+                }
             }
             /volumes:/ && current_service { in_volumes = 1; next }
             in_volumes && /^[[:space:]]*-/ {
