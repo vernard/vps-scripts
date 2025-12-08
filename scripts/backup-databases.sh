@@ -6,8 +6,6 @@
 #   ./backup-databases.sh              # Backup all configured databases
 #   ./backup-databases.sh uuid1 uuid2  # Backup specific UUIDs only
 
-set -e
-
 # Load common utilities
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/../lib/common.sh"
