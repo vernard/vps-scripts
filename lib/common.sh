@@ -344,7 +344,7 @@ find_storage_volumes() {
                     next
                 }
                 # Match included patterns (storage, uploads, files, etc)
-                if (/storage-data|storage|uploads|upload|files|file|media|assets|attachments/) {
+                if (/laravel-storage|storage-data|storage|uploads|upload|files|file|media|assets|attachments/) {
                     line = $0
                     # Extract volume name (before the colon)
                     vol_name = line

@@ -94,9 +94,9 @@ backup_mysql() {
     local backup_path="$4"
 
     # Read credentials (try multiple possible variable names)
-    local MYSQL_USER=$(read_coolify_env_multi "$env_file" "MYSQL_USER" "SERVICE_USER_MYSQL")
-    local MYSQL_PASSWORD=$(read_coolify_env_multi "$env_file" "MYSQL_PASSWORD" "SERVICE_PASSWORD_MYSQL" "SERVICE_PASSWORD_64_MYSQL")
-    local MYSQL_DB=$(read_coolify_env_multi "$env_file" "MYSQL_DATABASE" "MYSQL_DB")
+    local MYSQL_USER=$(read_coolify_env_multi "$env_file" "MYSQL_USER" "SERVICE_USER_MYSQL" "DB_USERNAME")
+    local MYSQL_PASSWORD=$(read_coolify_env_multi "$env_file" "MYSQL_PASSWORD" "SERVICE_PASSWORD_MYSQL" "SERVICE_PASSWORD_64_MYSQL" "DB_PASSWORD")
+    local MYSQL_DB=$(read_coolify_env_multi "$env_file" "MYSQL_DATABASE" "MYSQL_DB" "DB_DATABASE")
     local MYSQL_ROOT_PASSWORD=$(read_coolify_env_multi "$env_file" "MYSQL_ROOT_PASSWORD" "SERVICE_PASSWORD_MYSQL_ROOT")
     local BACKUP_DBS=$(read_coolify_env "$env_file" "BACKUP_DATABASES")
 

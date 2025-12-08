@@ -83,13 +83,13 @@ Setting any database `BACKUP_*` variable disables auto-discovery.
 ```
 
 **Database detection:**
-- MySQL/MariaDB: Uses `MYSQL_USER`, `MYSQL_PASSWORD`, `MYSQL_DATABASE` from `.env`
+- MySQL/MariaDB: Uses `MYSQL_USER`, `MYSQL_PASSWORD`, `MYSQL_DATABASE` from `.env` (also supports `DB_USERNAME`, `DB_PASSWORD`, `DB_DATABASE`)
 - PostgreSQL: Uses `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB` from `.env`
 - SQLite: Auto-detected by volume names containing `db-data` or `dbdata`
 
 **File storage detection:**
 Auto-detected by volume name patterns in `docker-compose.yml`:
-- Included: `storage-data`, `storage`, `uploads`, `files`, `media`, `assets`, `attachments`
+- Included: `laravel-storage`, `storage-data`, `storage`, `uploads`, `files`, `media`, `assets`, `attachments`
 - Excluded: `cache`, `tmp`, `logs`, `db-data`, `pg-data`, `mysql-data`, `redis-data`
 
 **Multiple databases:** The script automatically finds all env vars ending with `_DATABASE` or `_DB`. You can also add `BACKUP_DATABASES=db1,db2,db3` to your Coolify app's environment variables.

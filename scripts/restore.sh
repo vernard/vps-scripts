@@ -313,9 +313,9 @@ pre_restore_backup() {
 pre_backup_mysql() {
     local uuid="$1" env_file="$2" compose_file="$3" backup_path="$4"
 
-    local MYSQL_USER=$(read_coolify_env_multi "$env_file" "MYSQL_USER" "SERVICE_USER_MYSQL")
-    local MYSQL_PASSWORD=$(read_coolify_env_multi "$env_file" "MYSQL_PASSWORD" "SERVICE_PASSWORD_MYSQL" "SERVICE_PASSWORD_64_MYSQL")
-    local MYSQL_DB=$(read_coolify_env_multi "$env_file" "MYSQL_DATABASE" "MYSQL_DB")
+    local MYSQL_USER=$(read_coolify_env_multi "$env_file" "MYSQL_USER" "SERVICE_USER_MYSQL" "DB_USERNAME")
+    local MYSQL_PASSWORD=$(read_coolify_env_multi "$env_file" "MYSQL_PASSWORD" "SERVICE_PASSWORD_MYSQL" "SERVICE_PASSWORD_64_MYSQL" "DB_PASSWORD")
+    local MYSQL_DB=$(read_coolify_env_multi "$env_file" "MYSQL_DATABASE" "MYSQL_DB" "DB_DATABASE")
     local MYSQL_ROOT_PASSWORD=$(read_coolify_env_multi "$env_file" "MYSQL_ROOT_PASSWORD" "SERVICE_PASSWORD_MYSQL_ROOT")
 
     if [[ -n "$MYSQL_ROOT_PASSWORD" ]]; then
@@ -401,8 +401,8 @@ restore_mysql() {
     local env_file="$dir/.env"
     local compose_file=$(find_compose_file "$dir")
 
-    local MYSQL_USER=$(read_coolify_env_multi "$env_file" "MYSQL_USER" "SERVICE_USER_MYSQL")
-    local MYSQL_PASSWORD=$(read_coolify_env_multi "$env_file" "MYSQL_PASSWORD" "SERVICE_PASSWORD_MYSQL" "SERVICE_PASSWORD_64_MYSQL")
+    local MYSQL_USER=$(read_coolify_env_multi "$env_file" "MYSQL_USER" "SERVICE_USER_MYSQL" "DB_USERNAME")
+    local MYSQL_PASSWORD=$(read_coolify_env_multi "$env_file" "MYSQL_PASSWORD" "SERVICE_PASSWORD_MYSQL" "SERVICE_PASSWORD_64_MYSQL" "DB_PASSWORD")
     local MYSQL_ROOT_PASSWORD=$(read_coolify_env_multi "$env_file" "MYSQL_ROOT_PASSWORD" "SERVICE_PASSWORD_MYSQL_ROOT")
 
     # Prefer root for restores
