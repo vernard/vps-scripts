@@ -1,0 +1,22 @@
+# VPS Scripts Crontab Example
+#
+# To install: crontab -e and add the lines below
+# Make sure to update the path to match your installation
+
+# Update Cloudflare IP list with GitHub Actions IPs (every 6 hours)
+0 */6 * * * /root/Development/vps-scripts/scripts/update-cf-github-ips.sh
+
+# Backup PostgreSQL applications (daily at 2 AM)
+0 2 * * * /root/Development/vps-scripts/scripts/backup-app-postgres.sh
+
+# Backup MySQL applications (daily at 2:30 AM)
+30 2 * * * /root/Development/vps-scripts/scripts/backup-app-mysql.sh
+
+# Backup PostgreSQL services (daily at 3 AM)
+0 3 * * * /root/Development/vps-scripts/scripts/backup-service-postgres.sh
+
+# Backup MySQL services (daily at 3:30 AM)
+30 3 * * * /root/Development/vps-scripts/scripts/backup-service-mysql.sh
+
+# Full Coolify setup backup (weekly on Sunday at 4 AM)
+0 4 * * 0 /root/Development/vps-scripts/scripts/backup-coolify-setup.sh

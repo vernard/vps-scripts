@@ -1,0 +1,111 @@
+#!/bin/bash
+# Common utilities for VPS scripts
+
+# Detect project root (where this script lives)
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
+
+# Load environment variables from .env
+load_env() {
+    local env_file="$PROJECT_ROOT/.env"
+    if [[ -f "$env_file" ]]; then
+        set -a
+        source "$env_file"
+        set +a
+    else
+        log_error ".env file not found at $env_file"
+        exit 1
+    fi
+}
+
+# Logging function (controlled by ENABLE_LOGGING)
+log() {
+    if [[ "${ENABLE_LOGGING:-false}" == "true" ]]; then
+        local script_name="$(basename "${BASH_SOURCE[1]}" .sh)"
+        local log_dir="$PROJECT_ROOT/logs"
+        local log_file="$log_dir/${script_name}.log"
+
+        mkdir -p "$log_dir"
+        echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" >> "$log_file"
+    fi
+}
+
+# Error logging (always outputs, regardless of ENABLE_LOGGING)
+log_error() {
+    local script_name="$(basename "${BASH_SOURCE[1]}" .sh)"
+    local message="[$(date '+%Y-%m-%d %H:%M:%S')] ERROR: $*"
+
+    # Always output to stderr
+    echo "$message" >&2
+
+    # Also log to file if logging is enabled
+    if [[ "${ENABLE_LOGGING:-false}" == "true" ]]; then
+        local log_dir="$PROJECT_ROOT/logs"
+        local log_file="$log_dir/${script_name}.log"
+        mkdir -p "$log_dir"
+        echo "$message" >> "$log_file"
+    fi
+}
+
+# Sync to remote storage
+sync_to_remote() {
+    local source_path="$1"
+
+    case "${REMOTE_SYNC_METHOD:-}" in
+        rsync)
+            if [[ -n "${RSYNC_TARGET:-}" ]]; then
+                log "Syncing to $RSYNC_TARGET"
+                rsync -avz --delete "$source_path" "$RSYNC_TARGET"
+            fi
+            ;;
+        rclone)
+            if [[ -n "${RCLONE_REMOTE:-}" ]]; then
+                log "Syncing to $RCLONE_REMOTE"
+                rclone sync "$source_path" "$RCLONE_REMOTE"
+            fi
+            ;;
+        *)
+            log "No remote sync method configured"
+            ;;
+    esac
+}
+
+# Clean old backups based on retention policy
+cleanup_old_backups() {
+    local backup_path="$1"
+    local retention_days="${BACKUP_RETENTION_DAYS:-7}"
+
+    if [[ -d "$backup_path" ]]; then
+        log "Cleaning backups older than $retention_days days in $backup_path"
+        find "$backup_path" -type d -mtime "+$retention_days" -exec rm -rf {} + 2>/dev/null || true
+    fi
+}
+
+# Read env var from a Coolify app's .env file
+read_coolify_env() {
+    local env_file="$1"
+    local var_name="$2"
+
+    if [[ -f "$env_file" ]]; then
+        grep "^${var_name}=" "$env_file" | cut -d'=' -f2- | tr -d '"' | tr -d "'"
+    fi
+}
+
+# Get container name from docker-compose.yml
+get_container_name() {
+    local compose_file="$1"
+    local service_name="$2"
+
+    if [[ -f "$compose_file" ]]; then
+        # Try to get container_name, or fall back to service name
+        local name=$(grep -A5 "^  ${service_name}:" "$compose_file" | grep "container_name:" | awk '{print $2}' | tr -d '"' | tr -d "'")
+        if [[ -n "$name" ]]; then
+            echo "$name"
+        else
+            # Fallback: compose project name + service
+            local project_dir=$(dirname "$compose_file")
+            local project_name=$(basename "$project_dir")
+            echo "${project_name}-${service_name}-1"
+        fi
+    fi
+}
