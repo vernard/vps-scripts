@@ -89,22 +89,36 @@ cleanup_old_backups() {
     fi
 }
 
-# Read env var from a Coolify app's .env file
+# Read env var from a Coolify app's .env file (resolves variable references)
 read_coolify_env() {
     local env_file="$1"
     local var_name="$2"
 
     if [[ -f "$env_file" ]]; then
-        grep "^${var_name}=" "$env_file" | cut -d'=' -f2- | tr -d '"' | tr -d "'"
+        # Source the env file in a subshell to resolve variable references
+        (
+            set -a
+            source "$env_file" 2>/dev/null
+            set +a
+            echo "${!var_name}"
+        )
     fi
 }
 
-# Find all env vars ending with _DATABASE and return their values (comma-separated)
+# Find all env vars ending with _DATABASE or _DB and return their resolved values (comma-separated)
 find_database_env_vars() {
     local env_file="$1"
 
     if [[ -f "$env_file" ]]; then
-        grep "_DATABASE=" "$env_file" | cut -d'=' -f2- | tr -d '"' | tr -d "'" | sort -u | paste -sd ',' -
+        (
+            set -a
+            source "$env_file" 2>/dev/null
+            set +a
+            # Get all vars ending with _DATABASE or _DB and print their resolved values
+            for var in $(grep -E "(_DATABASE|_DB)=" "$env_file" | cut -d'=' -f1); do
+                echo "${!var}"
+            done | sort -u | paste -sd ',' -
+        )
     fi
 }
 
