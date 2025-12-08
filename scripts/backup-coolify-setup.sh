@@ -71,12 +71,26 @@ Restore Instructions:
 6. Restart Coolify: docker compose -f /data/coolify/source/docker-compose.yml up -d
 EOF
 
-log "Backup completed: $BACKUP_PATH"
+log "Coolify backup completed: $BACKUP_PATH"
+
+# Backup vps-scripts .env file (separate directory)
+VPS_SCRIPTS_BACKUP_BASE="${BACKUP_DIR:-/backups}/vps-scripts"
+VPS_SCRIPTS_BACKUP_PATH="$VPS_SCRIPTS_BACKUP_BASE/$TIMESTAMP"
+
+if [[ -f "$PROJECT_ROOT/.env" ]]; then
+    log "Backing up vps-scripts .env"
+    mkdir -p "$VPS_SCRIPTS_BACKUP_PATH"
+    cp "$PROJECT_ROOT/.env" "$VPS_SCRIPTS_BACKUP_PATH/.env"
+    log "vps-scripts backup completed: $VPS_SCRIPTS_BACKUP_PATH"
+else
+    log "No vps-scripts .env found at $PROJECT_ROOT/.env"
+fi
 
 # Cleanup old backups
 cleanup_old_backups "$BACKUP_BASE"
+cleanup_old_backups "$VPS_SCRIPTS_BACKUP_BASE"
 
 # Sync to remote
-sync_to_remote "$BACKUP_BASE"
+sync_to_remote "${BACKUP_DIR:-/backups}"
 
-log "Coolify setup backup completed"
+log "All backups completed"

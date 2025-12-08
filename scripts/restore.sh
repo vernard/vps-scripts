@@ -9,6 +9,7 @@
 #   ./restore.sh --coolify-setup          # Restore Coolify installation
 #   ./restore.sh -y                       # Skip confirmation prompts
 #   ./restore.sh uuid1                    # Directly restore specific UUID
+#   ./restore.sh --latest uuid1           # Restore latest backup for UUID
 
 set -e
 
@@ -25,6 +26,7 @@ DRY_RUN=false
 FETCH_REMOTE=false
 COOLIFY_SETUP=false
 SKIP_CONFIRMATION=false
+RESTORE_LATEST=false
 TARGET_UUID=""
 
 show_usage() {
@@ -37,6 +39,7 @@ Options:
   --fetch-remote    Sync backups from remote storage before restore
   --dry-run         Preview what would be restored without making changes
   --coolify-setup   Restore full Coolify installation
+  --latest          Restore the most recent backup (skip timestamp selection)
   -y, --yes         Skip confirmation prompts
   -h, --help        Show this help message
 
@@ -48,6 +51,7 @@ Examples:
   $(basename "$0") --fetch-remote     # Fetch from remote, then interactive
   $(basename "$0") --dry-run          # Preview mode
   $(basename "$0") abc123xyz          # Restore specific UUID
+  $(basename "$0") --latest abc123xyz # Restore latest backup for UUID
   $(basename "$0") --coolify-setup    # Restore Coolify installation
 EOF
 }
@@ -70,6 +74,10 @@ while [[ $# -gt 0 ]]; do
             SKIP_CONFIRMATION=true
             shift
             ;;
+        --latest)
+            RESTORE_LATEST=true
+            shift
+            ;;
         --help|-h)
             show_usage
             exit 0
@@ -89,6 +97,38 @@ done
 # ============================================================================
 # Helper Functions
 # ============================================================================
+
+# Restart docker compose for a UUID
+restart_compose() {
+    local uuid="$1"
+
+    if [[ "$DRY_RUN" == true ]]; then
+        log "[DRY-RUN] Would restart containers for $uuid"
+        return 0
+    fi
+
+    if ! find_uuid_location "$uuid"; then
+        log_error "UUID not found: $uuid"
+        return 1
+    fi
+
+    local dir="$UUID_BASE_DIR/$uuid"
+    local compose_file=$(find_compose_file "$dir")
+
+    if [[ -z "$compose_file" ]]; then
+        log_error "No compose file found for $uuid"
+        return 1
+    fi
+
+    log "Restarting containers for $uuid..."
+    docker compose -f "$compose_file" restart || {
+        log_error "Failed to restart containers"
+        return 1
+    }
+
+    log "Containers restarted successfully"
+    return 0
+}
 
 # Format timestamp from YYYYMMDD_HHMMSS to readable format
 format_timestamp() {
@@ -879,6 +919,9 @@ select_restore_items() {
                     ;;
             esac
         done
+
+        # Restart containers after restore
+        restart_compose "$uuid"
         return 0
     fi
 
@@ -905,6 +948,9 @@ select_restore_items() {
                 restore_files "$uuid" "$backup_path" "$item"
                 ;;
         esac
+
+        # Restart containers after restore
+        restart_compose "$uuid"
         return 0
     fi
 
@@ -961,8 +1007,19 @@ direct_uuid_restore() {
         exit 1
     fi
 
-    if ! list_timestamps "$category" "$uuid"; then
-        exit 1
+    # If --latest flag, auto-select most recent timestamp
+    if [[ "$RESTORE_LATEST" == true ]]; then
+        SELECTED_TIMESTAMP=$(ls -1t "$BACKUP_BASE/$category/$uuid" 2>/dev/null | head -1)
+        if [[ -z "$SELECTED_TIMESTAMP" ]]; then
+            log_error "No backups found for UUID: $uuid"
+            exit 1
+        fi
+        local formatted=$(format_timestamp "$SELECTED_TIMESTAMP")
+        log "Using latest backup: $formatted"
+    else
+        if ! list_timestamps "$category" "$uuid"; then
+            exit 1
+        fi
     fi
 
     local backup_path="$BACKUP_BASE/$category/$uuid/$SELECTED_TIMESTAMP"

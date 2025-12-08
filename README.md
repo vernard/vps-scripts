@@ -14,7 +14,7 @@ cp .env.example .env
 | Script | Description |
 |--------|-------------|
 | `backup-databases.sh` | Unified backup for MySQL, PostgreSQL, and SQLite databases |
-| `backup-coolify-setup.sh` | Full Coolify installation backup for VPS migration |
+| `backup-coolify-setup.sh` | Full Coolify installation backup + vps-scripts .env |
 | `restore.sh` | Interactive restore for databases and file volumes |
 | `update-cf-github-ips.sh` | Updates Cloudflare IP list with GitHub Actions IPs |
 
@@ -111,6 +111,7 @@ Browse and select backups to restore via numbered menus.
 | `--fetch-remote` | Sync from remote storage before restore |
 | `--dry-run` | Preview what would be restored |
 | `--coolify-setup` | Restore full Coolify installation |
+| `--latest` | Restore the most recent backup (skip timestamp selection) |
 | `-y, --yes` | Skip confirmation prompts |
 | `uuid` | Directly restore specific UUID |
 
@@ -129,6 +130,9 @@ Browse and select backups to restore via numbered menus.
 # Restore specific UUID
 ./scripts/restore.sh abc123xyz
 
+# Restore latest backup for UUID (no prompts with -y)
+./scripts/restore.sh --latest -y abc123xyz
+
 # Restore Coolify installation
 ./scripts/restore.sh --coolify-setup
 ```
@@ -138,6 +142,7 @@ Browse and select backups to restore via numbered menus.
 - **Confirmation prompts**: Requires explicit confirmation before destructive operations
 - **Dry-run mode**: Test restore process without making changes
 - **Validation**: Verifies backup integrity (zstd) before restore
+- **Auto-restart**: Containers automatically restart after successful restore
 
 **Remote sync:**
 
@@ -215,6 +220,8 @@ crontab -e
 │   ├── coolify-db.sql.zst
 │   ├── coolify-data.tar.zst
 │   └── manifest.txt
+├── vps-scripts/{timestamp}/          # Backed up with coolify-setup
+│   └── .env
 └── pre-restore/{uuid}/{timestamp}/   # Safety backups before restore
     └── ...
 ```
