@@ -367,13 +367,13 @@ pre_backup_files() {
 
     local STORAGE_VOLUMES=$(find_storage_volumes "$compose_file" 2>/dev/null) || return 1
 
-    while IFS=: read -r service_name vol_name mount_path; do
-        [[ -z "$service_name" ]] && continue
-        local CONTAINER=$(get_container_name "$compose_file" "$service_name")
+    while IFS=: read -r svc_name storage_vol_name mnt_path; do
+        [[ -z "$svc_name" ]] && continue
+        local CONTAINER=$(get_container_name "$compose_file" "$svc_name")
         if check_container "$CONTAINER"; then
-            local temp_dir="$backup_path/${vol_name}-temp"
-            docker cp "$CONTAINER:$mount_path" "$temp_dir" 2>/dev/null || continue
-            tar --zstd -cf "$backup_path/${vol_name}.tar.zst" -C "$backup_path" "${vol_name}-temp" && rm -rf "$temp_dir"
+            local temp_dir="$backup_path/${storage_vol_name}-temp"
+            docker cp "$CONTAINER:$mnt_path" "$temp_dir" 2>/dev/null || continue
+            tar --zstd -cf "$backup_path/${storage_vol_name}.tar.zst" -C "$backup_path" "${storage_vol_name}-temp" && rm -rf "$temp_dir"
         fi
     done <<< "$STORAGE_VOLUMES"
 }
