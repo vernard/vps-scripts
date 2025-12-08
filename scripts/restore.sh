@@ -10,6 +10,7 @@
 #   ./restore.sh -y                       # Skip confirmation prompts
 #   ./restore.sh uuid1                    # Directly restore specific UUID
 #   ./restore.sh --latest uuid1           # Restore latest backup for UUID
+#   ./restore.sh --target NEW_UUID OLD_UUID  # Migrate from OLD to NEW service
 
 set -e
 
@@ -27,7 +28,8 @@ FETCH_REMOTE=false
 COOLIFY_SETUP=false
 SKIP_CONFIRMATION=false
 RESTORE_LATEST=false
-TARGET_UUID=""
+SOURCE_UUID=""
+RESTORE_TARGET=""  # Target UUID for cross-service migration
 
 show_usage() {
     cat <<EOF
@@ -36,12 +38,13 @@ Usage: $(basename "$0") [OPTIONS] [UUID]
 Restore backups for Coolify services and applications.
 
 Options:
-  --fetch-remote    Sync backups from remote storage before restore
-  --dry-run         Preview what would be restored without making changes
-  --coolify-setup   Restore full Coolify installation
-  --latest          Restore the most recent backup (skip timestamp selection)
-  -y, --yes         Skip confirmation prompts
-  -h, --help        Show this help message
+  --fetch-remote       Sync backups from remote storage before restore
+  --dry-run            Preview what would be restored without making changes
+  --coolify-setup      Restore full Coolify installation
+  --latest             Restore the most recent backup (skip timestamp selection)
+  --target TARGET_UUID Restore to a different service (for migrations)
+  -y, --yes            Skip confirmation prompts
+  -h, --help           Show this help message
 
 Arguments:
   UUID              Directly restore a specific service/application UUID
@@ -53,6 +56,10 @@ Examples:
   $(basename "$0") abc123xyz          # Restore specific UUID
   $(basename "$0") --latest abc123xyz # Restore latest backup for UUID
   $(basename "$0") --coolify-setup    # Restore Coolify installation
+
+Migration (restore backup from one service to another):
+  $(basename "$0") --target NEW_UUID OLD_UUID
+  $(basename "$0") --target NEW_UUID --latest -y OLD_UUID
 EOF
 }
 
@@ -78,6 +85,10 @@ while [[ $# -gt 0 ]]; do
             RESTORE_LATEST=true
             shift
             ;;
+        --target)
+            RESTORE_TARGET="$2"
+            shift 2
+            ;;
         --help|-h)
             show_usage
             exit 0
@@ -88,7 +99,7 @@ while [[ $# -gt 0 ]]; do
             exit 1
             ;;
         *)
-            TARGET_UUID="$1"
+            SOURCE_UUID="$1"
             shift
             ;;
     esac
@@ -383,21 +394,28 @@ pre_backup_files() {
 # ============================================================================
 
 # Restore MySQL database
+# Args: source_uuid backup_path db_file [target_uuid]
 restore_mysql() {
-    local uuid="$1"
+    local source_uuid="$1"
     local backup_path="$2"
     local db_file="$3"
+    local target_uuid="${4:-$source_uuid}"  # Default to source if no target
 
     local db_name="${db_file%.sql.zst}"
 
-    log "Restoring MySQL database: $db_name"
+    if [[ "$target_uuid" != "$source_uuid" ]]; then
+        log "Restoring MySQL database: $db_name (from $source_uuid to $target_uuid)"
+    else
+        log "Restoring MySQL database: $db_name"
+    fi
 
-    if ! find_uuid_location "$uuid"; then
-        log_error "UUID not found: $uuid"
+    # Use target UUID for container/credentials lookup
+    if ! find_uuid_location "$target_uuid"; then
+        log_error "Target UUID not found: $target_uuid"
         return 1
     fi
 
-    local dir="$UUID_BASE_DIR/$uuid"
+    local dir="$UUID_BASE_DIR/$target_uuid"
     local env_file="$dir/.env"
     local compose_file=$(find_compose_file "$dir")
 
@@ -413,7 +431,7 @@ restore_mysql() {
 
     local CONTAINER=$(find_running_container "$compose_file" "db" "mysql" "mariadb")
     if [[ $? -ne 0 ]]; then
-        log_error "No running MySQL container found for $uuid"
+        log_error "No running MySQL container found for $target_uuid"
         return 1
     fi
 
@@ -422,8 +440,8 @@ restore_mysql() {
         return 0
     fi
 
-    # Create pre-restore backup
-    pre_restore_backup "$uuid" "mysql"
+    # Create pre-restore backup of target
+    pre_restore_backup "$target_uuid" "mysql"
 
     log "  Restoring to container: $CONTAINER"
     zstd -dc "$backup_path/$db_file" | docker exec -i "$CONTAINER" mysql -u"$MYSQL_USER" -p"$MYSQL_PASSWORD" "$db_name" || {
@@ -436,21 +454,28 @@ restore_mysql() {
 }
 
 # Restore PostgreSQL database
+# Args: source_uuid backup_path db_file [target_uuid]
 restore_postgres() {
-    local uuid="$1"
+    local source_uuid="$1"
     local backup_path="$2"
     local db_file="$3"
+    local target_uuid="${4:-$source_uuid}"  # Default to source if no target
 
     local db_name="${db_file%.sql.zst}"
 
-    log "Restoring PostgreSQL database: $db_name"
+    if [[ "$target_uuid" != "$source_uuid" ]]; then
+        log "Restoring PostgreSQL database: $db_name (from $source_uuid to $target_uuid)"
+    else
+        log "Restoring PostgreSQL database: $db_name"
+    fi
 
-    if ! find_uuid_location "$uuid"; then
-        log_error "UUID not found: $uuid"
+    # Use target UUID for container/credentials lookup
+    if ! find_uuid_location "$target_uuid"; then
+        log_error "Target UUID not found: $target_uuid"
         return 1
     fi
 
-    local dir="$UUID_BASE_DIR/$uuid"
+    local dir="$UUID_BASE_DIR/$target_uuid"
     local env_file="$dir/.env"
     local compose_file=$(find_compose_file "$dir")
 
@@ -458,7 +483,7 @@ restore_postgres() {
 
     local CONTAINER=$(find_running_container "$compose_file" "db" "postgres" "postgresql")
     if [[ $? -ne 0 ]]; then
-        log_error "No running PostgreSQL container found for $uuid"
+        log_error "No running PostgreSQL container found for $target_uuid"
         return 1
     fi
 
@@ -468,8 +493,8 @@ restore_postgres() {
         return 0
     fi
 
-    # Create pre-restore backup
-    pre_restore_backup "$uuid" "postgres"
+    # Create pre-restore backup of target
+    pre_restore_backup "$target_uuid" "postgres"
 
     # Drop and recreate database before restore
     log "  Dropping existing database $db_name..."
@@ -490,23 +515,30 @@ restore_postgres() {
 }
 
 # Restore SQLite database
+# Args: source_uuid backup_path [target_uuid]
 restore_sqlite() {
-    local uuid="$1"
+    local source_uuid="$1"
     local backup_path="$2"
+    local target_uuid="${3:-$source_uuid}"  # Default to source if no target
 
-    log "Restoring SQLite database"
+    if [[ "$target_uuid" != "$source_uuid" ]]; then
+        log "Restoring SQLite database (from $source_uuid to $target_uuid)"
+    else
+        log "Restoring SQLite database"
+    fi
 
-    if ! find_uuid_location "$uuid"; then
-        log_error "UUID not found: $uuid"
+    # Use target UUID for container lookup
+    if ! find_uuid_location "$target_uuid"; then
+        log_error "Target UUID not found: $target_uuid"
         return 1
     fi
 
-    local dir="$UUID_BASE_DIR/$uuid"
+    local dir="$UUID_BASE_DIR/$target_uuid"
     local compose_file=$(find_compose_file "$dir")
 
     local SQLITE_INFO=$(find_sqlite_service "$compose_file")
     if [[ -z "$SQLITE_INFO" ]]; then
-        log_error "No SQLite data volume found for $uuid"
+        log_error "No SQLite data volume found for $target_uuid"
         return 1
     fi
 
@@ -524,8 +556,8 @@ restore_sqlite() {
         return 0
     fi
 
-    # Create pre-restore backup
-    pre_restore_backup "$uuid" "sqlite"
+    # Create pre-restore backup of target
+    pre_restore_backup "$target_uuid" "sqlite"
 
     # Extract to temp directory
     local temp_dir=$(mktemp -d)
@@ -545,27 +577,34 @@ restore_sqlite() {
 }
 
 # Restore file volumes
+# Args: source_uuid backup_path volume_file [target_uuid]
 restore_files() {
-    local uuid="$1"
+    local source_uuid="$1"
     local backup_path="$2"
     local volume_file="$3"
+    local target_uuid="${4:-$source_uuid}"  # Default to source if no target
 
     local vol_name="${volume_file%.tar.zst}"
 
-    log "Restoring file volume: $vol_name"
+    if [[ "$target_uuid" != "$source_uuid" ]]; then
+        log "Restoring file volume: $vol_name (from $source_uuid to $target_uuid)"
+    else
+        log "Restoring file volume: $vol_name"
+    fi
 
-    if ! find_uuid_location "$uuid"; then
-        log_error "UUID not found: $uuid"
+    # Use target UUID for container lookup
+    if ! find_uuid_location "$target_uuid"; then
+        log_error "Target UUID not found: $target_uuid"
         return 1
     fi
 
-    local dir="$UUID_BASE_DIR/$uuid"
+    local dir="$UUID_BASE_DIR/$target_uuid"
     local compose_file=$(find_compose_file "$dir")
 
     # Find the storage volume with matching name
     local STORAGE_INFO=$(find_storage_volumes "$compose_file" | grep ":${vol_name}:")
     if [[ -z "$STORAGE_INFO" ]]; then
-        log_error "Volume $vol_name not found in compose file"
+        log_error "Volume $vol_name not found in compose file for $target_uuid"
         return 1
     fi
 
@@ -584,8 +623,8 @@ restore_files() {
         return 0
     fi
 
-    # Create pre-restore backup
-    pre_restore_backup "$uuid" "files"
+    # Create pre-restore backup of target
+    pre_restore_backup "$target_uuid" "files"
 
     # Extract and restore
     local temp_dir=$(mktemp -d)
@@ -826,9 +865,11 @@ list_coolify_backups() {
 }
 
 # Select what to restore from a backup
+# Args: backup_path source_uuid [target_uuid]
 select_restore_items() {
     local backup_path="$1"
-    local uuid="$2"
+    local source_uuid="$2"
+    local target_uuid="${3:-$source_uuid}"  # Default to source if no target
 
     # Find available items
     local items=()
@@ -839,9 +880,9 @@ select_restore_items() {
         if [[ -f "$file" ]]; then
             local filename=$(basename "$file")
             items+=("$filename")
-            # Determine if MySQL or PostgreSQL based on running container image
-            if find_uuid_location "$uuid"; then
-                local dir="$UUID_BASE_DIR/$uuid"
+            # Determine if MySQL or PostgreSQL based on running container image (use target)
+            if find_uuid_location "$target_uuid"; then
+                local dir="$UUID_BASE_DIR/$target_uuid"
                 local compose_file=$(find_compose_file "$dir")
                 local db_container=$(find_running_container "$compose_file" "db" "postgres" "postgresql" "mysql" "mariadb" 2>/dev/null) || true
                 if [[ -n "$db_container" ]]; then
@@ -902,7 +943,11 @@ select_restore_items() {
     if [[ "$selection" == "a" ]]; then
         # Restore all items
         local formatted_ts=$(format_timestamp "$SELECTED_TIMESTAMP")
-        if ! confirm_restore "$uuid" "$formatted_ts (all items)"; then
+        local confirm_target="$target_uuid"
+        if [[ "$target_uuid" != "$source_uuid" ]]; then
+            confirm_target="$source_uuid -> $target_uuid"
+        fi
+        if ! confirm_restore "$confirm_target" "$formatted_ts (all items)"; then
             return 1
         fi
 
@@ -911,22 +956,22 @@ select_restore_items() {
             local type="${item_types[$idx]}"
             case "$type" in
                 mysql)
-                    restore_mysql "$uuid" "$backup_path" "$item"
+                    restore_mysql "$source_uuid" "$backup_path" "$item" "$target_uuid"
                     ;;
                 postgres)
-                    restore_postgres "$uuid" "$backup_path" "$item"
+                    restore_postgres "$source_uuid" "$backup_path" "$item" "$target_uuid"
                     ;;
                 sqlite)
-                    restore_sqlite "$uuid" "$backup_path"
+                    restore_sqlite "$source_uuid" "$backup_path" "$target_uuid"
                     ;;
                 files)
-                    restore_files "$uuid" "$backup_path" "$item"
+                    restore_files "$source_uuid" "$backup_path" "$item" "$target_uuid"
                     ;;
             esac
         done
 
-        # Restart containers after restore
-        restart_compose "$uuid"
+        # Restart containers after restore (use target)
+        restart_compose "$target_uuid"
         return 0
     fi
 
@@ -935,27 +980,31 @@ select_restore_items() {
         local type="${item_types[$((selection-1))]}"
 
         local formatted_ts=$(format_timestamp "$SELECTED_TIMESTAMP")
-        if ! confirm_restore "$uuid" "$formatted_ts ($item)"; then
+        local confirm_target="$target_uuid"
+        if [[ "$target_uuid" != "$source_uuid" ]]; then
+            confirm_target="$source_uuid -> $target_uuid"
+        fi
+        if ! confirm_restore "$confirm_target" "$formatted_ts ($item)"; then
             return 1
         fi
 
         case "$type" in
             mysql)
-                restore_mysql "$uuid" "$backup_path" "$item"
+                restore_mysql "$source_uuid" "$backup_path" "$item" "$target_uuid"
                 ;;
             postgres)
-                restore_postgres "$uuid" "$backup_path" "$item"
+                restore_postgres "$source_uuid" "$backup_path" "$item" "$target_uuid"
                 ;;
             sqlite)
-                restore_sqlite "$uuid" "$backup_path"
+                restore_sqlite "$source_uuid" "$backup_path" "$target_uuid"
                 ;;
             files)
-                restore_files "$uuid" "$backup_path" "$item"
+                restore_files "$source_uuid" "$backup_path" "$item" "$target_uuid"
                 ;;
         esac
 
-        # Restart containers after restore
-        restart_compose "$uuid"
+        # Restart containers after restore (use target)
+        restart_compose "$target_uuid"
         return 0
     fi
 
@@ -984,8 +1033,9 @@ interactive_restore() {
     fi
     log "Backup validation passed"
 
-    # Select and restore items
-    select_restore_items "$backup_path" "$SELECTED_UUID"
+    # Select and restore items (use RESTORE_TARGET if set, otherwise same UUID)
+    local target="${RESTORE_TARGET:-$SELECTED_UUID}"
+    select_restore_items "$backup_path" "$SELECTED_UUID" "$target"
 }
 
 # Interactive Coolify restore
@@ -998,36 +1048,47 @@ interactive_coolify_restore() {
 }
 
 # Direct UUID restore
+# Args: source_uuid [target_uuid from RESTORE_TARGET global]
 direct_uuid_restore() {
-    local uuid="$1"
+    local source_uuid="$1"
+    local target_uuid="${RESTORE_TARGET:-$source_uuid}"
 
-    # Find backup category
+    # Find backup category (from source UUID)
     local category=""
-    if [[ -d "$BACKUP_BASE/services/$uuid" ]]; then
+    if [[ -d "$BACKUP_BASE/services/$source_uuid" ]]; then
         category="services"
-    elif [[ -d "$BACKUP_BASE/apps/$uuid" ]]; then
+    elif [[ -d "$BACKUP_BASE/apps/$source_uuid" ]]; then
         category="apps"
     else
-        log_error "No backups found for UUID: $uuid"
+        log_error "No backups found for UUID: $source_uuid"
         exit 1
+    fi
+
+    # Validate target UUID exists if specified
+    if [[ -n "$RESTORE_TARGET" ]]; then
+        if ! find_uuid_location "$target_uuid"; then
+            log_error "Target UUID not found: $target_uuid"
+            exit 1
+        fi
+        log "Migration mode: $source_uuid -> $target_uuid"
     fi
 
     # If --latest flag, auto-select most recent timestamp
     if [[ "$RESTORE_LATEST" == true ]]; then
-        SELECTED_TIMESTAMP=$(ls -1t "$BACKUP_BASE/$category/$uuid" 2>/dev/null | head -1)
+        SELECTED_TIMESTAMP=$(ls -1t "$BACKUP_BASE/$category/$source_uuid" 2>/dev/null | head -1)
         if [[ -z "$SELECTED_TIMESTAMP" ]]; then
-            log_error "No backups found for UUID: $uuid"
+            log_error "No backups found for UUID: $source_uuid"
             exit 1
         fi
         local formatted=$(format_timestamp "$SELECTED_TIMESTAMP")
         log "Using latest backup: $formatted"
     else
-        if ! list_timestamps "$category" "$uuid"; then
+        if ! list_timestamps "$category" "$source_uuid"; then
             exit 1
         fi
     fi
 
-    local backup_path="$BACKUP_BASE/$category/$uuid/$SELECTED_TIMESTAMP"
+    local backup_path="$BACKUP_BASE/$category/$source_uuid/$SELECTED_TIMESTAMP"
 
     log "Validating backup..."
     if ! validate_backup "$backup_path"; then
@@ -1035,7 +1096,7 @@ direct_uuid_restore() {
     fi
     log "Backup validation passed"
 
-    select_restore_items "$backup_path" "$uuid"
+    select_restore_items "$backup_path" "$source_uuid" "$target_uuid"
 }
 
 # ============================================================================
@@ -1059,8 +1120,8 @@ main() {
     fi
 
     # Handle direct UUID restore
-    if [[ -n "$TARGET_UUID" ]]; then
-        direct_uuid_restore "$TARGET_UUID"
+    if [[ -n "$SOURCE_UUID" ]]; then
+        direct_uuid_restore "$SOURCE_UUID"
         exit 0
     fi
 

@@ -112,6 +112,7 @@ Browse and select backups to restore via numbered menus.
 | `--dry-run` | Preview what would be restored |
 | `--coolify-setup` | Restore full Coolify installation |
 | `--latest` | Restore the most recent backup (skip timestamp selection) |
+| `--target UUID` | Restore to a different service (for migrations) |
 | `-y, --yes` | Skip confirmation prompts |
 | `uuid` | Directly restore specific UUID |
 
@@ -135,6 +136,12 @@ Browse and select backups to restore via numbered menus.
 
 # Restore Coolify installation
 ./scripts/restore.sh --coolify-setup
+
+# Migration: restore OLD_UUID's backup to NEW_UUID's service
+./scripts/restore.sh --target NEW_UUID OLD_UUID
+
+# Migration with latest backup, no prompts
+./scripts/restore.sh --target NEW_UUID --latest -y OLD_UUID
 ```
 
 **Safety features:**
