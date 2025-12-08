@@ -105,6 +105,43 @@ RSYNC_TARGET=user@host:/path
 RCLONE_REMOTE=gdrive:backups/vps      # Requires: rclone config
 ```
 
+### Setting up rclone with Google Drive
+
+1. Install rclone:
+   ```bash
+   curl https://rclone.org/install.sh | sudo bash
+   ```
+
+2. Create OAuth credentials in [Google Cloud Console](https://console.cloud.google.com/):
+   - Create project > Enable Google Drive API
+   - APIs & Services > Credentials > Create OAuth client ID (Desktop app)
+
+3. Configure rclone:
+   ```bash
+   rclone config
+   # n) New remote
+   # name> gdrive
+   # Storage> drive
+   # client_id> (your client ID)
+   # client_secret> (your client secret)
+   # scope> 4 (drive.file - only access files created by rclone)
+   # service_account_file> (leave blank - not needed)
+   # Edit advanced config> n
+   # Use auto config> n (for headless server)
+   # Copy the URL, open in local browser, authorize, paste code back
+   ```
+
+4. Test connection:
+   ```bash
+   rclone lsd gdrive:
+   ```
+
+5. Update `.env`:
+   ```bash
+   REMOTE_SYNC_METHOD=rclone
+   RCLONE_REMOTE=gdrive:backups/vps
+   ```
+
 ## CRON
 
 See `crontab.example` for sample schedules. Install with:

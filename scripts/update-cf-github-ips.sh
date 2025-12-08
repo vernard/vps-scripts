@@ -16,21 +16,14 @@ fi
 
 log "Fetching GitHub Actions IPs"
 
-# Fetch and format GitHub Actions IPs
-github_ips=$(curl -sf https://api.github.com/meta | jq '.actions | map({ip: .})')
-
-if [[ -z "$github_ips" ]] || [[ "$github_ips" == "null" ]]; then
-    log_error "Failed to fetch GitHub IPs"
-    exit 1
-fi
-
-log "Updating Cloudflare IP list"
+# Fetch and format GitHub Actions IPs to a file
+curl -s https://api.github.com/meta | jq '.actions | map({ip: .})' > /tmp/github_ips.json
 
 # Replace IP list contents
 response=$(curl -sf -X PUT "https://api.cloudflare.com/client/v4/accounts/$CF_ACCOUNT_ID/rules/lists/$CF_LIST_ID/items" \
     -H "Authorization: Bearer $CF_API_TOKEN" \
     -H "Content-Type: application/json" \
-    --data "$github_ips")
+    --data @/tmp/github_ips.json)
 
 if echo "$response" | jq -e '.success' > /dev/null 2>&1; then
     log "Successfully updated Cloudflare IP list"
@@ -38,3 +31,5 @@ else
     log_error "Failed to update Cloudflare IP list: $response"
     exit 1
 fi
+
+rm /tmp/github_ips.json
