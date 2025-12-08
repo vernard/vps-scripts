@@ -48,29 +48,41 @@ for uuid in "${UUIDS[@]}"; do
         MYSQL_PASSWORD="$MYSQL_ROOT_PASSWORD"
     fi
 
-    # Use BACKUP_DATABASES if set, otherwise use MYSQL_DATABASE
+    # Collect databases to backup:
+    # 1. BACKUP_DATABASES if set, otherwise MYSQL_DATABASE
+    # 2. Any env vars ending with _DATABASE
     if [[ -n "$BACKUP_DBS" ]]; then
         DBS="$BACKUP_DBS"
     else
         DBS="$MYSQL_DB"
     fi
 
+    # Add any *_DATABASE env vars
+    EXTRA_DBS=$(find_database_env_vars "$APP_ENV")
+    if [[ -n "$EXTRA_DBS" ]]; then
+        if [[ -n "$DBS" ]]; then
+            DBS="$DBS,$EXTRA_DBS"
+        else
+            DBS="$EXTRA_DBS"
+        fi
+    fi
+
+    # Deduplicate database list
+    DBS=$(echo "$DBS" | tr ',' '\n' | sort -u | paste -sd ',' -)
+
     if [[ -z "$MYSQL_USER" ]] || [[ -z "$MYSQL_PASSWORD" ]]; then
         log_error "Missing MySQL credentials for $uuid"
         continue
     fi
 
-    # Find container name (look for mysql/mariadb service)
-    CONTAINER=$(get_container_name "$COMPOSE_FILE" "mysql")
-    if [[ -z "$CONTAINER" ]]; then
-        CONTAINER=$(get_container_name "$COMPOSE_FILE" "mariadb")
-    fi
-    if [[ -z "$CONTAINER" ]]; then
-        CONTAINER=$(get_container_name "$COMPOSE_FILE" "db")
-    fi
-
-    if [[ -z "$CONTAINER" ]]; then
-        log_error "Could not find MySQL container for $uuid"
+    # Find a running container (tries db, mysql, mariadb in order)
+    CONTAINER=$(find_running_container "$COMPOSE_FILE" "db" "mysql" "mariadb")
+    if [[ $? -ne 0 ]]; then
+        if [[ -n "$CONTAINER" ]]; then
+            log_error "No running container found for $uuid (tried: $CONTAINER)"
+        else
+            log_error "Could not find MySQL container for $uuid"
+        fi
         continue
     fi
 

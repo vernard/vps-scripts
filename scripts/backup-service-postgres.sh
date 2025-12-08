@@ -41,26 +41,41 @@ for uuid in "${UUIDS[@]}"; do
     PG_DB=$(read_coolify_env "$SERVICE_ENV" "POSTGRES_DB")
     BACKUP_DBS=$(read_coolify_env "$SERVICE_ENV" "BACKUP_DATABASES")
 
-    # Use BACKUP_DATABASES if set, otherwise use POSTGRES_DB
+    # Collect databases to backup:
+    # 1. BACKUP_DATABASES if set, otherwise POSTGRES_DB
+    # 2. Any env vars ending with _DATABASE
     if [[ -n "$BACKUP_DBS" ]]; then
         DBS="$BACKUP_DBS"
     else
         DBS="$PG_DB"
     fi
 
+    # Add any *_DATABASE env vars
+    EXTRA_DBS=$(find_database_env_vars "$SERVICE_ENV")
+    if [[ -n "$EXTRA_DBS" ]]; then
+        if [[ -n "$DBS" ]]; then
+            DBS="$DBS,$EXTRA_DBS"
+        else
+            DBS="$EXTRA_DBS"
+        fi
+    fi
+
+    # Deduplicate database list
+    DBS=$(echo "$DBS" | tr ',' '\n' | sort -u | paste -sd ',' -)
+
     if [[ -z "$PG_USER" ]] || [[ -z "$PG_PASSWORD" ]]; then
         log_error "Missing PostgreSQL credentials for $uuid"
         continue
     fi
 
-    # Find container name (look for postgres service)
-    CONTAINER=$(get_container_name "$COMPOSE_FILE" "postgres")
-    if [[ -z "$CONTAINER" ]]; then
-        CONTAINER=$(get_container_name "$COMPOSE_FILE" "db")
-    fi
-
-    if [[ -z "$CONTAINER" ]]; then
-        log_error "Could not find PostgreSQL container for $uuid"
+    # Find a running container (tries db, postgres, postgresql in order)
+    CONTAINER=$(find_running_container "$COMPOSE_FILE" "db" "postgres" "postgresql")
+    if [[ $? -ne 0 ]]; then
+        if [[ -n "$CONTAINER" ]]; then
+            log_error "No running container found for $uuid (tried: $CONTAINER)"
+        else
+            log_error "Could not find PostgreSQL container for $uuid"
+        fi
         continue
     fi
 

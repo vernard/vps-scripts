@@ -91,6 +91,15 @@ read_coolify_env() {
     fi
 }
 
+# Find all env vars ending with _DATABASE and return their values (comma-separated)
+find_database_env_vars() {
+    local env_file="$1"
+
+    if [[ -f "$env_file" ]]; then
+        grep "_DATABASE=" "$env_file" | cut -d'=' -f2- | tr -d '"' | tr -d "'" | sort -u | paste -sd ',' -
+    fi
+}
+
 # Find docker-compose file (supports .yml and .yaml)
 find_compose_file() {
     local dir="$1"
@@ -119,4 +128,62 @@ get_container_name() {
             echo "${project_name}-${service_name}-1"
         fi
     fi
+}
+
+# Check if a container exists and is running
+# Returns 0 if running, 1 if exists but not running, 2 if doesn't exist
+check_container() {
+    local container_name="$1"
+
+    if docker inspect "$container_name" &>/dev/null; then
+        local status=$(docker inspect -f '{{.State.Running}}' "$container_name" 2>/dev/null)
+        if [[ "$status" == "true" ]]; then
+            return 0  # Running
+        else
+            return 1  # Exists but not running
+        fi
+    else
+        return 2  # Doesn't exist
+    fi
+}
+
+# Get human-readable container status message
+get_container_status_message() {
+    local container_name="$1"
+
+    check_container "$container_name"
+    local status=$?
+
+    case $status in
+        0) echo "running" ;;
+        1) echo "exists but not running" ;;
+        2) echo "not found" ;;
+    esac
+}
+
+# Find a running container from a list of service names
+# Usage: find_running_container "$COMPOSE_FILE" "mysql" "mariadb" "db"
+# Returns the first container that exists and is running
+find_running_container() {
+    local compose_file="$1"
+    shift
+    local service_names=("$@")
+    local tried_containers=()
+
+    for service in "${service_names[@]}"; do
+        local container=$(get_container_name "$compose_file" "$service")
+        if [[ -n "$container" ]]; then
+            tried_containers+=("$container")
+            if check_container "$container"; then
+                echo "$container"
+                return 0
+            fi
+        fi
+    done
+
+    # Return list of tried containers for error reporting (comma-separated)
+    if [[ ${#tried_containers[@]} -gt 0 ]]; then
+        printf '%s\n' "${tried_containers[*]}" | tr ' ' ','
+    fi
+    return 1
 }
