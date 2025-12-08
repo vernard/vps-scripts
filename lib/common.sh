@@ -258,15 +258,20 @@ find_sqlite_service() {
 
     if [[ -f "$compose_file" ]]; then
         awk '
-            /^[[:space:]]*[a-zA-Z0-9_-]+:[[:space:]]*$/ {
+            /^services:[[:space:]]*$/ { in_services = 1; next }
+            /^[a-zA-Z]/ && !/^[[:space:]]/ { in_services = 0 }
+            in_services && /^[[:space:]]+[a-zA-Z0-9_-]+:[[:space:]]*$/ {
                 current_service = $1; gsub(/:/, "", current_service)
             }
             /volumes:/ && current_service { in_volumes = 1; next }
             in_volumes && /^[[:space:]]*-/ {
+                # Match db-data/dbdata but exclude mysql/postgres/redis paths
                 if (/db-data|dbdata/) {
                     mount_path = $0
                     gsub(/.*:/, "", mount_path)
                     gsub(/["\047[:space:]]/, "", mount_path)
+                    # Skip if mount path is for mysql/postgres/redis
+                    if (mount_path ~ /mysql|postgres|redis/) next
                     print current_service ":" mount_path
                     exit
                 }
@@ -285,7 +290,9 @@ find_storage_volumes() {
 
     if [[ -f "$compose_file" ]]; then
         awk '
-            /^[[:space:]]*[a-zA-Z0-9_-]+:[[:space:]]*$/ {
+            /^services:[[:space:]]*$/ { in_services = 1; next }
+            /^[a-zA-Z]/ && !/^[[:space:]]/ { in_services = 0 }
+            in_services && /^[[:space:]]+[a-zA-Z0-9_-]+:[[:space:]]*$/ {
                 current_service = $1; gsub(/:/, "", current_service)
             }
             /volumes:/ && current_service { in_volumes = 1; next }

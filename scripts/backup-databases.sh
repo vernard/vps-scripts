@@ -506,13 +506,13 @@ fi
 
 log "Backup completed ($BACKUP_COUNT backups)"
 
-# List all backed up files with sizes
+# List backup files with sizes (excludes .env, shows only actual backups)
 if [[ ${#BACKUP_PATHS[@]} -gt 0 ]]; then
     log ""
-    log "Backed up files:"
+    log "Backup files:"
     for path in "${BACKUP_PATHS[@]}"; do
         if [[ -d "$path" ]]; then
-            find "$path" -type f | while read -r file; do
+            find "$path" -name "*.zst" -type f | while read -r file; do
                 size=$(ls -lh "$file" | awk '{print $5}')
                 log "  $size  $file"
             done
