@@ -203,7 +203,15 @@ RCLONE_REMOTE=gdrive:backups/vps      # Requires: rclone config
 
 ## CRON
 
-See `crontab.example` for sample schedules. Install with:
+See `crontab.example` for sample schedules and timezone setup. Cron uses the system timezone - verify it's correct before scheduling:
+
+```bash
+timedatectl                                       # Check current timezone
+sudo timedatectl set-timezone America/New_York   # Set if needed
+sudo systemctl restart cron                       # Apply changes
+```
+
+Install cron jobs with:
 
 ```bash
 crontab -e

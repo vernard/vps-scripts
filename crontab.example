@@ -3,6 +3,18 @@
 # To install: crontab -e and add the lines below
 # Make sure to update the path to match your installation
 
+# TIMEZONE SETUP (Important!)
+# Cron uses the system timezone. Verify yours is correct:
+#   timedatectl                                       # Check current timezone
+#   sudo timedatectl set-timezone America/New_York   # Set timezone
+#   sudo systemctl restart cron                       # Restart cron after change
+#
+# Alternatively, set timezone for all jobs in this crontab:
+# CRON_TZ=America/New_York
+#
+# Or prefix individual commands:
+# 0 2 * * * TZ=America/New_York /path/to/script.sh
+
 # Update Cloudflare IP list with GitHub Actions IPs (every 6 hours)
 0 */6 * * * /root/Development/vps-scripts/scripts/update-cf-github-ips.sh
 
