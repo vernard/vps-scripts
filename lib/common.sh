@@ -18,15 +18,23 @@ load_env() {
     fi
 }
 
-# Logging function (controlled by ENABLE_LOGGING)
+# Logging function (controlled by ENABLE_LOGGING and LOG_TO_SCREEN)
 log() {
+    local message="[$(date '+%Y-%m-%d %H:%M:%S')] $*"
+
+    # Output to screen if enabled
+    if [[ "${LOG_TO_SCREEN:-true}" == "true" ]]; then
+        echo "$message"
+    fi
+
+    # Write to log file if enabled
     if [[ "${ENABLE_LOGGING:-false}" == "true" ]]; then
         local script_name="$(basename "${BASH_SOURCE[1]}" .sh)"
         local log_dir="$PROJECT_ROOT/logs"
         local log_file="$log_dir/${script_name}.log"
 
         mkdir -p "$log_dir"
-        echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" >> "$log_file"
+        echo "$message" >> "$log_file"
     fi
 }
 
