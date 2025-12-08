@@ -44,8 +44,9 @@ CF_LIST_ID=          # Create list first, find ID in URL when editing
 **General settings:**
 
 ```bash
-BACKUP_DIR=/backups           # Local backup directory
-BACKUP_RETENTION_DAYS=7       # Auto-delete backups older than this
+BACKUP_DIR=/backups                # Local backup directory
+BACKUP_RETENTION_DAYS=7            # Auto-delete database backups older than this
+BACKUP_FILES_RETENTION_DAYS=30     # Auto-delete file backups older than this (default: 30)
 ```
 
 **Auto-discovery mode** (recommended):

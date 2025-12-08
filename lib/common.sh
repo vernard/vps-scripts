@@ -115,13 +115,27 @@ sync_from_remote() {
 }
 
 # Clean old backups based on retention policy
+# Args: backup_path [retention_days] [skip_files]
+# skip_files: if "true", skip directories containing file backups (*.tar.zst except sqlite-data.tar.zst)
 cleanup_old_backups() {
     local backup_path="$1"
-    local retention_days="${BACKUP_RETENTION_DAYS:-7}"
+    local retention_days="${2:-${BACKUP_RETENTION_DAYS:-7}}"
+    local skip_files="${3:-false}"
 
     if [[ -d "$backup_path" ]]; then
         log "Cleaning backups older than $retention_days days in $backup_path"
-        find "$backup_path" -type d -mtime "+$retention_days" -exec rm -rf {} + 2>/dev/null || true
+
+        # Find timestamp directories (depth 2: backup_path/uuid/timestamp)
+        find "$backup_path" -mindepth 2 -maxdepth 2 -type d -mtime "+$retention_days" 2>/dev/null | while read -r dir; do
+            # If skip_files=true, skip directories containing file backups
+            if [[ "$skip_files" == "true" ]]; then
+                # Check for .tar.zst files that aren't sqlite-data.tar.zst
+                if find "$dir" -maxdepth 1 -name "*.tar.zst" ! -name "sqlite-data.tar.zst" -quit 2>/dev/null | grep -q .; then
+                    continue
+                fi
+            fi
+            rm -rf "$dir"
+        done
     fi
 }
 

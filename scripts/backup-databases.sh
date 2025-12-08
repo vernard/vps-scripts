@@ -543,8 +543,16 @@ fi
 
 # Cleanup and sync
 if [[ $BACKUP_COUNT -gt 0 ]]; then
-    cleanup_old_backups "$BACKUP_BASE/services"
-    cleanup_old_backups "$BACKUP_BASE/apps"
+    if [[ "$FILES_ONLY" == true ]]; then
+        # Files-only mode: use FILES retention (default 30 days)
+        local files_retention="${BACKUP_FILES_RETENTION_DAYS:-30}"
+        cleanup_old_backups "$BACKUP_BASE/services" "$files_retention"
+        cleanup_old_backups "$BACKUP_BASE/apps" "$files_retention"
+    else
+        # Normal mode: use default retention, skip directories with file backups
+        cleanup_old_backups "$BACKUP_BASE/services" "${BACKUP_RETENTION_DAYS:-7}" "true"
+        cleanup_old_backups "$BACKUP_BASE/apps" "${BACKUP_RETENTION_DAYS:-7}" "true"
+    fi
     sync_to_remote "$BACKUP_BASE"
 fi
 
