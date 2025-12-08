@@ -47,7 +47,14 @@ BACKUP_DIR=/backups           # Local backup directory
 BACKUP_RETENTION_DAYS=7       # Auto-delete backups older than this
 ```
 
-**Configure UUIDs by database type** (auto-detects service vs application):
+**Auto-discovery mode** (recommended):
+
+Leave all `BACKUP_*` variables empty. The script will:
+1. Find all running Coolify services and applications
+2. Try all backup methods (MySQL, PostgreSQL, SQLite, Files)
+3. Skip methods that don't apply to each service
+
+**Manual configuration** (optional):
 
 ```bash
 # Find UUIDs: ls /data/coolify/services/ /data/coolify/applications/
@@ -57,10 +64,12 @@ BACKUP_SQLITE="uuid5"
 BACKUP_FILES="uuid6"         # File storage volumes (uploads, media, etc.)
 ```
 
+Setting any `BACKUP_*` variable disables auto-discovery.
+
 **Usage:**
 
 ```bash
-# Backup all configured databases
+# Auto-discover and backup all running services
 ./scripts/backup-databases.sh
 
 # Backup specific UUID(s) only

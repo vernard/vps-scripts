@@ -1,6 +1,9 @@
 #!/bin/bash
 # Common utilities for VPS scripts
 
+COOLIFY_SERVICES_DIR="/data/coolify/services"
+COOLIFY_APPS_DIR="/data/coolify/applications"
+
 # Detect project root (where this script lives)
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
@@ -311,4 +314,42 @@ find_storage_volumes() {
             in_volumes && /^[[:space:]]*[a-zA-Z]/ && !/^[[:space:]]*-/ { in_volumes = 0 }
         ' "$compose_file"
     fi
+}
+
+# Check if compose file has any running containers
+has_running_containers() {
+    local compose_file="$1"
+    local project_name=$(basename "$(dirname "$compose_file")")
+    docker ps --format '{{.Names}}' 2>/dev/null | grep -q "$project_name"
+}
+
+# Find all UUIDs with running containers
+discover_running_uuids() {
+    local uuids=()
+
+    # Check services
+    for dir in "$COOLIFY_SERVICES_DIR"/*/; do
+        [[ -d "$dir" ]] || continue
+        local uuid=$(basename "$dir")
+        local compose=$(find_compose_file "$dir")
+        [[ -z "$compose" ]] && continue
+
+        if has_running_containers "$compose"; then
+            uuids+=("$uuid")
+        fi
+    done
+
+    # Check applications
+    for dir in "$COOLIFY_APPS_DIR"/*/; do
+        [[ -d "$dir" ]] || continue
+        local uuid=$(basename "$dir")
+        local compose=$(find_compose_file "$dir")
+        [[ -z "$compose" ]] && continue
+
+        if has_running_containers "$compose"; then
+            uuids+=("$uuid")
+        fi
+    done
+
+    printf '%s\n' "${uuids[@]}"
 }

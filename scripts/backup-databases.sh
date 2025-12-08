@@ -13,8 +13,6 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/../lib/common.sh"
 load_env
 
-COOLIFY_SERVICES_DIR="/data/coolify/services"
-COOLIFY_APPS_DIR="/data/coolify/applications"
 BACKUP_BASE="${BACKUP_DIR:-/backups}"
 TIMESTAMP=$(date '+%Y%m%d_%H%M%S')
 
@@ -26,6 +24,20 @@ FILTER_UUIDS=()
 if [[ $# -gt 0 ]]; then
     FILTER_UUIDS=("$@")
     log "Filtering backups to UUIDs: ${FILTER_UUIDS[*]}"
+fi
+
+# Check if manual config exists
+has_manual_config() {
+    [[ -n "${BACKUP_MYSQL:-}" ]] || \
+    [[ -n "${BACKUP_POSTGRES:-}" ]] || \
+    [[ -n "${BACKUP_SQLITE:-}" ]] || \
+    [[ -n "${BACKUP_FILES:-}" ]]
+}
+
+# Determine if auto-discovery mode should be used
+AUTO_DISCOVER=false
+if ! has_manual_config && [[ ${#FILTER_UUIDS[@]} -eq 0 ]]; then
+    AUTO_DISCOVER=true
 fi
 
 # Check if UUID should be processed (based on filter)
@@ -306,6 +318,97 @@ backup_files() {
     return 0
 }
 
+# Try MySQL backup (returns silently if no MySQL container found)
+try_backup_mysql() {
+    local uuid="$1" env_file="$2" compose_file="$3" backup_path="$4"
+
+    # Quick check for MySQL container
+    local container=$(find_running_container "$compose_file" "db" "mysql" "mariadb" 2>/dev/null) || true
+    [[ -z "$container" ]] && return 1
+
+    log "  Trying MySQL backup for $uuid"
+    backup_mysql "$uuid" "$env_file" "$compose_file" "$backup_path" 2>/dev/null
+}
+
+# Try PostgreSQL backup (returns silently if no PostgreSQL container found)
+try_backup_postgres() {
+    local uuid="$1" env_file="$2" compose_file="$3" backup_path="$4"
+
+    # Quick check for PostgreSQL container
+    local container=$(find_running_container "$compose_file" "db" "postgres" "postgresql" 2>/dev/null) || true
+    [[ -z "$container" ]] && return 1
+
+    log "  Trying PostgreSQL backup for $uuid"
+    backup_postgres "$uuid" "$env_file" "$compose_file" "$backup_path" 2>/dev/null
+}
+
+# Try SQLite backup (returns silently if no SQLite volume found)
+try_backup_sqlite() {
+    local uuid="$1" env_file="$2" compose_file="$3" backup_path="$4"
+
+    # Quick check for SQLite volume
+    local sqlite_info=$(find_sqlite_service "$compose_file" 2>/dev/null) || true
+    [[ -z "$sqlite_info" ]] && return 1
+
+    log "  Trying SQLite backup for $uuid"
+    backup_sqlite "$uuid" "$env_file" "$compose_file" "$backup_path" 2>/dev/null
+}
+
+# Try Files backup (returns silently if no storage volumes found)
+try_backup_files() {
+    local uuid="$1" env_file="$2" compose_file="$3" backup_path="$4"
+
+    # Quick check for storage volumes
+    local storage_vols=$(find_storage_volumes "$compose_file" 2>/dev/null) || true
+    [[ -z "$storage_vols" ]] && return 1
+
+    log "  Trying Files backup for $uuid"
+    backup_files "$uuid" "$env_file" "$compose_file" "$backup_path" 2>/dev/null
+}
+
+# Try all backup methods for a UUID (used in auto-discover mode)
+try_all_backups() {
+    local uuid="$1"
+
+    if ! find_uuid_location "$uuid"; then
+        return 1
+    fi
+
+    local dir="$UUID_BASE_DIR/$uuid"
+    local env_file="$dir/.env"
+    local compose_file=$(find_compose_file "$dir")
+    local backup_path="$BACKUP_BASE/$UUID_BACKUP_SUBDIR/$uuid/$TIMESTAMP"
+    local success=false
+
+    [[ -z "$compose_file" ]] && return 1
+
+    log "Auto-backup ($UUID_BACKUP_SUBDIR): $uuid"
+
+    # Try each backup method
+    if try_backup_mysql "$uuid" "$env_file" "$compose_file" "$backup_path"; then
+        success=true
+    fi
+
+    if try_backup_postgres "$uuid" "$env_file" "$compose_file" "$backup_path"; then
+        success=true
+    fi
+
+    if try_backup_sqlite "$uuid" "$env_file" "$compose_file" "$backup_path"; then
+        success=true
+    fi
+
+    if try_backup_files "$uuid" "$env_file" "$compose_file" "$backup_path"; then
+        success=true
+    fi
+
+    # Copy .env if any backup succeeded
+    if [[ "$success" == true ]] && [[ -f "$env_file" ]]; then
+        mkdir -p "$backup_path"
+        cp "$env_file" "$backup_path/env.backup"
+        ((BACKUP_COUNT++))
+    fi
+}
+
 # Process a single UUID
 process_uuid() {
     local uuid="$1"
@@ -379,11 +482,19 @@ process_configured() {
 
 log "Starting backup"
 
-# Process all configured backups (simplified config vars)
-process_configured "BACKUP_MYSQL" "mysql"
-process_configured "BACKUP_POSTGRES" "postgres"
-process_configured "BACKUP_SQLITE" "sqlite"
-process_configured "BACKUP_FILES" "files"
+if [[ "$AUTO_DISCOVER" == true ]]; then
+    log "No BACKUP_* config found - auto-discovering running services"
+    while IFS= read -r uuid; do
+        [[ -z "$uuid" ]] && continue
+        try_all_backups "$uuid"
+    done < <(discover_running_uuids)
+else
+    # Process all configured backups (manual config)
+    process_configured "BACKUP_MYSQL" "mysql"
+    process_configured "BACKUP_POSTGRES" "postgres"
+    process_configured "BACKUP_SQLITE" "sqlite"
+    process_configured "BACKUP_FILES" "files"
+fi
 
 # Cleanup and sync
 if [[ $BACKUP_COUNT -gt 0 ]]; then
