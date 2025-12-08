@@ -521,6 +521,12 @@ if [[ "$FILES_ONLY" == true ]]; then
     for uuid in "${FILTER_UUIDS[@]}"; do
         process_uuid "$uuid" "files"
     done
+elif [[ ${#FILTER_UUIDS[@]} -gt 0 ]]; then
+    # Direct UUID backup: try all methods on specified UUIDs
+    log "Backing up specified UUIDs: ${FILTER_UUIDS[*]}"
+    for uuid in "${FILTER_UUIDS[@]}"; do
+        try_all_backups "$uuid"
+    done
 elif [[ "$AUTO_DISCOVER" == true ]]; then
     log "No BACKUP_* config found - auto-discovering running services"
     while IFS= read -r uuid; do
