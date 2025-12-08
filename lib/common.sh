@@ -195,8 +195,23 @@ get_container_name() {
         local project_dir=$(dirname "$compose_file")
         local project_name=$(basename "$project_dir")
 
-        # Method 1: Extract container_name from compose file using awk
-        # This handles any indentation and finds container_name within the service block
+        # Method 1: Try to find running container via docker (Coolify pattern: service-uuid-*)
+        # This is the most reliable method for Coolify deployments
+        local container=$(docker ps --format '{{.Names}}' 2>/dev/null | grep -E "^${service_name}-${project_name}-" | head -1)
+        if [[ -n "$container" ]]; then
+            echo "$container"
+            return
+        fi
+
+        # Method 2: Try alternate Coolify pattern (uuid in container name)
+        container=$(docker ps --format '{{.Names}}' 2>/dev/null | grep -E "^${service_name}.*${project_name}" | head -1)
+        if [[ -n "$container" ]]; then
+            echo "$container"
+            return
+        fi
+
+        # Method 3: Extract container_name from compose file using awk (fallback)
+        # Note: This can fail on complex compose files with nested service references
         local name=$(awk -v svc="$service_name" '
             /^[[:space:]]*[a-zA-Z0-9_-]+:[[:space:]]*$/ { in_service = ($1 == svc":") }
             in_service && /container_name:/ { gsub(/.*container_name:[[:space:]]*/, ""); gsub(/["\047]/, ""); print; exit }
@@ -204,20 +219,6 @@ get_container_name() {
 
         if [[ -n "$name" ]]; then
             echo "$name"
-            return
-        fi
-
-        # Method 2: Try to find running container via docker (Coolify pattern: service-uuid-*)
-        local container=$(docker ps --format '{{.Names}}' 2>/dev/null | grep -E "^${service_name}-${project_name}-" | head -1)
-        if [[ -n "$container" ]]; then
-            echo "$container"
-            return
-        fi
-
-        # Method 3: Try alternate Coolify pattern (uuid in container name)
-        container=$(docker ps --format '{{.Names}}' 2>/dev/null | grep -E "^${service_name}.*${project_name}" | head -1)
-        if [[ -n "$container" ]]; then
-            echo "$container"
             return
         fi
 

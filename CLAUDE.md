@@ -1,1 +1,2 @@
 - Always update .env.example, crontab.example, and README.md
+- Do not execute the commands. I'm developing locally but testing it on a VPS. If you need to test something, tell me what commands to run in my VPS.
