@@ -54,6 +54,7 @@ BACKUP_RETENTION_DAYS=7       # Auto-delete backups older than this
 BACKUP_MYSQL="uuid1,uuid2"
 BACKUP_POSTGRES="uuid3,uuid4"
 BACKUP_SQLITE="uuid5"
+BACKUP_FILES="uuid6"         # File storage volumes (uploads, media, etc.)
 ```
 
 **Usage:**
@@ -70,6 +71,11 @@ BACKUP_SQLITE="uuid5"
 - MySQL/MariaDB: Uses `MYSQL_USER`, `MYSQL_PASSWORD`, `MYSQL_DATABASE` from `.env`
 - PostgreSQL: Uses `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB` from `.env`
 - SQLite: Auto-detected by volume names containing `db-data` or `dbdata`
+
+**File storage detection:**
+Auto-detected by volume name patterns in `docker-compose.yml`:
+- Included: `storage-data`, `storage`, `uploads`, `files`, `media`, `assets`, `attachments`
+- Excluded: `cache`, `tmp`, `logs`, `db-data`, `pg-data`, `mysql-data`, `redis-data`
 
 **Multiple databases:** The script automatically finds all env vars ending with `_DATABASE` or `_DB`. You can also add `BACKUP_DATABASES=db1,db2,db3` to your Coolify app's environment variables.
 
@@ -99,15 +105,17 @@ crontab -e
 ```
 /backups/
 ├── apps/{uuid}/{timestamp}/
-│   ├── {database}.sql.gz      # MySQL/PostgreSQL dumps
-│   ├── sqlite-data.tar.gz     # SQLite data directory
+│   ├── {database}.sql.zst     # MySQL/PostgreSQL dumps
+│   ├── sqlite-data.tar.zst    # SQLite data directory
+│   ├── {volume-name}.tar.zst  # File storage volumes (storage, uploads, etc.)
 │   └── env.backup
 ├── services/{uuid}/{timestamp}/
-│   ├── {database}.sql.gz
-│   ├── sqlite-data.tar.gz
+│   ├── {database}.sql.zst
+│   ├── sqlite-data.tar.zst
+│   ├── {volume-name}.tar.zst
 │   └── env.backup
 └── coolify-setup/{timestamp}/
-    ├── coolify-db.sql.gz
-    ├── coolify-data.tar.gz
+    ├── coolify-db.sql.zst
+    ├── coolify-data.tar.zst
     └── manifest.txt
 ```

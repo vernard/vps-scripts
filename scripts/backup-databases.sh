@@ -71,11 +71,11 @@ backup_mysql() {
     local compose_file="$3"
     local backup_path="$4"
 
-    # Read credentials
-    local MYSQL_USER=$(read_coolify_env "$env_file" "MYSQL_USER")
-    local MYSQL_PASSWORD=$(read_coolify_env "$env_file" "MYSQL_PASSWORD")
-    local MYSQL_DB=$(read_coolify_env "$env_file" "MYSQL_DATABASE")
-    local MYSQL_ROOT_PASSWORD=$(read_coolify_env "$env_file" "MYSQL_ROOT_PASSWORD")
+    # Read credentials (try multiple possible variable names)
+    local MYSQL_USER=$(read_coolify_env_multi "$env_file" "MYSQL_USER" "SERVICE_USER_MYSQL")
+    local MYSQL_PASSWORD=$(read_coolify_env_multi "$env_file" "MYSQL_PASSWORD" "SERVICE_PASSWORD_MYSQL" "SERVICE_PASSWORD_64_MYSQL")
+    local MYSQL_DB=$(read_coolify_env_multi "$env_file" "MYSQL_DATABASE" "MYSQL_DB")
+    local MYSQL_ROOT_PASSWORD=$(read_coolify_env_multi "$env_file" "MYSQL_ROOT_PASSWORD" "SERVICE_PASSWORD_MYSQL_ROOT")
     local BACKUP_DBS=$(read_coolify_env "$env_file" "BACKUP_DATABASES")
 
     # Prefer root user for backups if available
@@ -127,7 +127,7 @@ backup_mysql() {
         [[ -z "$db" ]] && continue
 
         log "  Dumping MySQL database: $db"
-        docker exec "$CONTAINER" mysqldump -u"$MYSQL_USER" -p"$MYSQL_PASSWORD" "$db" 2>/dev/null | gzip > "$backup_path/${db}.sql.gz" || {
+        docker exec "$CONTAINER" mysqldump -u"$MYSQL_USER" -p"$MYSQL_PASSWORD" "$db" 2>/dev/null | zstd > "$backup_path/${db}.sql.zst" || {
             log_error "  Failed to dump database $db"
         }
     done
@@ -142,9 +142,9 @@ backup_postgres() {
     local compose_file="$3"
     local backup_path="$4"
 
-    # Read credentials
-    local PG_USER=$(read_coolify_env "$env_file" "POSTGRES_USER")
-    local PG_DB=$(read_coolify_env "$env_file" "POSTGRES_DB")
+    # Read credentials (try multiple possible variable names)
+    local PG_USER=$(read_coolify_env_multi "$env_file" "POSTGRES_USER" "SERVICE_USER_POSTGRES")
+    local PG_DB=$(read_coolify_env_multi "$env_file" "POSTGRES_DB" "POSTGRES_DATABASE")
     local BACKUP_DBS=$(read_coolify_env "$env_file" "BACKUP_DATABASES")
 
     # Collect databases to backup
@@ -190,7 +190,7 @@ backup_postgres() {
         [[ -z "$db" ]] && continue
 
         log "  Dumping PostgreSQL database: $db"
-        docker exec "$CONTAINER" pg_dump -U "$PG_USER" "$db" 2>/dev/null | gzip > "$backup_path/${db}.sql.gz" || {
+        docker exec "$CONTAINER" pg_dump -U "$PG_USER" "$db" 2>/dev/null | zstd > "$backup_path/${db}.sql.zst" || {
             log_error "  Failed to dump database $db"
         }
     done
@@ -242,7 +242,66 @@ backup_sqlite() {
     }
 
     # Compress the backup
-    tar -czf "$backup_path/sqlite-data.tar.gz" -C "$backup_path" sqlite-data && rm -rf "$backup_path/sqlite-data"
+    tar --zstd -cf "$backup_path/sqlite-data.tar.zst" -C "$backup_path" sqlite-data && rm -rf "$backup_path/sqlite-data"
+
+    return 0
+}
+
+# Backup file storage volumes
+backup_files() {
+    local uuid="$1"
+    local env_file="$2"
+    local compose_file="$3"
+    local backup_path="$4"
+
+    # Find storage volumes
+    local STORAGE_VOLUMES=$(find_storage_volumes "$compose_file")
+    if [[ -z "$STORAGE_VOLUMES" ]]; then
+        log_error "No file storage volumes found for $uuid"
+        return 1
+    fi
+
+    # Create backup directory
+    mkdir -p "$backup_path"
+
+    local backup_count=0
+
+    # Process each storage volume
+    while IFS=: read -r service_name vol_name mount_path; do
+        [[ -z "$service_name" ]] && continue
+
+        log "  Found storage volume '$vol_name' in service '$service_name' at '$mount_path'"
+
+        # Get container name
+        local CONTAINER=$(get_container_name "$compose_file" "$service_name")
+        if [[ -z "$CONTAINER" ]]; then
+            log_error "  Could not find container for service $service_name"
+            continue
+        fi
+
+        # Verify container is running
+        if ! check_container "$CONTAINER"; then
+            log_error "  Container '$CONTAINER' is not running"
+            continue
+        fi
+
+        # Copy files from container
+        log "  Copying files from $CONTAINER:$mount_path"
+        local temp_dir="$backup_path/${vol_name}-temp"
+        docker cp "$CONTAINER:$mount_path" "$temp_dir" || {
+            log_error "  Failed to copy files from $CONTAINER"
+            continue
+        }
+
+        # Compress the backup using volume name
+        tar --zstd -cf "$backup_path/${vol_name}.tar.zst" -C "$backup_path" "${vol_name}-temp" && rm -rf "$temp_dir"
+        ((backup_count++))
+
+    done <<< "$STORAGE_VOLUMES"
+
+    if [[ $backup_count -eq 0 ]]; then
+        return 1
+    fi
 
     return 0
 }
@@ -280,8 +339,11 @@ process_uuid() {
         sqlite)
             backup_sqlite "$uuid" "$env_file" "$compose_file" "$backup_path"
             ;;
+        files)
+            backup_files "$uuid" "$env_file" "$compose_file" "$backup_path"
+            ;;
         *)
-            log_error "Unknown database type: $db_type"
+            log_error "Unknown backup type: $db_type"
             return 1
             ;;
     esac
@@ -315,12 +377,13 @@ process_configured() {
     done
 }
 
-log "Starting database backup"
+log "Starting backup"
 
 # Process all configured backups (simplified config vars)
 process_configured "BACKUP_MYSQL" "mysql"
 process_configured "BACKUP_POSTGRES" "postgres"
 process_configured "BACKUP_SQLITE" "sqlite"
+process_configured "BACKUP_FILES" "files"
 
 # Cleanup and sync
 if [[ $BACKUP_COUNT -gt 0 ]]; then
@@ -329,4 +392,4 @@ if [[ $BACKUP_COUNT -gt 0 ]]; then
     sync_to_remote "$BACKUP_BASE"
 fi
 
-log "Database backup completed ($BACKUP_COUNT backups)"
+log "Backup completed ($BACKUP_COUNT backups)"

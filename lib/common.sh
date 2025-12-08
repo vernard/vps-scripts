@@ -105,6 +105,22 @@ read_coolify_env() {
     fi
 }
 
+# Try multiple variable names, return first non-empty value
+# Usage: read_coolify_env_multi "$env_file" "VAR1" "VAR2" "VAR3"
+read_coolify_env_multi() {
+    local env_file="$1"
+    shift
+    local var_names=("$@")
+
+    for var in "${var_names[@]}"; do
+        local value=$(read_coolify_env "$env_file" "$var")
+        if [[ -n "$value" ]]; then
+            echo "$value"
+            return 0
+        fi
+    done
+}
+
 # Find all env vars ending with _DATABASE or _DB and return their resolved values (comma-separated)
 find_database_env_vars() {
     local env_file="$1"
@@ -250,6 +266,46 @@ find_sqlite_service() {
                     gsub(/["\047[:space:]]/, "", mount_path)
                     print current_service ":" mount_path
                     exit
+                }
+            }
+            in_volumes && /^[[:space:]]*[a-zA-Z]/ && !/^[[:space:]]*-/ { in_volumes = 0 }
+        ' "$compose_file"
+    fi
+}
+
+# Find file storage volumes and their mount paths
+# Returns lines of "service_name:volume_name:mount_path" for each matching volume
+# Includes: storage-data, storage, uploads, files, media, assets, attachments
+# Excludes: cache, tmp, temp, logs, database-data, db-data, pg-data, redis-data, mysql-data
+find_storage_volumes() {
+    local compose_file="$1"
+
+    if [[ -f "$compose_file" ]]; then
+        awk '
+            /^[[:space:]]*[a-zA-Z0-9_-]+:[[:space:]]*$/ {
+                current_service = $1; gsub(/:/, "", current_service)
+            }
+            /volumes:/ && current_service { in_volumes = 1; next }
+            in_volumes && /^[[:space:]]*-/ {
+                # Skip excluded patterns (cache, db, etc)
+                if (/cache|tmp|temp|logs|database-data|db-data|dbdata|pg-data|postgres-data|mysql-data|redis-data/) {
+                    next
+                }
+                # Match included patterns (storage, uploads, files, etc)
+                if (/storage-data|storage|uploads|upload|files|file|media|assets|attachments/) {
+                    line = $0
+                    # Extract volume name (before the colon)
+                    vol_name = line
+                    gsub(/^[[:space:]]*-[[:space:]]*["\047]?/, "", vol_name)
+                    gsub(/:.*/, "", vol_name)
+                    # Extract just the suffix (after last underscore) for the backup filename
+                    vol_suffix = vol_name
+                    gsub(/.*_/, "", vol_suffix)
+                    # Extract mount path (after the colon)
+                    mount_path = line
+                    gsub(/.*:/, "", mount_path)
+                    gsub(/["\047[:space:]]/, "", mount_path)
+                    print current_service ":" vol_suffix ":" mount_path
                 }
             }
             in_volumes && /^[[:space:]]*[a-zA-Z]/ && !/^[[:space:]]*-/ { in_volumes = 0 }

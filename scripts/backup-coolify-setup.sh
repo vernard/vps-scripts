@@ -27,7 +27,7 @@ log "Backing up Coolify's internal database"
 COOLIFY_DB_CONTAINER=$(docker ps --format '{{.Names}}' | grep -E '^coolify-db' | head -1)
 
 if [[ -n "$COOLIFY_DB_CONTAINER" ]]; then
-    docker exec "$COOLIFY_DB_CONTAINER" pg_dumpall -U coolify | gzip > "$BACKUP_PATH/coolify-db.sql.gz" || {
+    docker exec "$COOLIFY_DB_CONTAINER" pg_dumpall -U coolify | zstd > "$BACKUP_PATH/coolify-db.sql.zst" || {
         log_error "Failed to backup Coolify database"
     }
 else
@@ -36,7 +36,7 @@ fi
 
 # Backup Coolify configuration directory
 log "Backing up Coolify configuration"
-tar -czf "$BACKUP_PATH/coolify-data.tar.gz" \
+tar --zstd -cf "$BACKUP_PATH/coolify-data.tar.zst" \
     --exclude='*/backups/*' \
     --exclude='*/logs/*' \
     -C /data coolify || {
@@ -58,15 +58,15 @@ Hostname: $(hostname)
 Coolify Version: $(docker inspect coolify --format '{{.Config.Image}}' 2>/dev/null || echo 'unknown')
 
 Contents:
-- coolify-db.sql.gz: Coolify's internal PostgreSQL database
-- coolify-data.tar.gz: /data/coolify directory (configs, docker-compose files)
+- coolify-db.sql.zst: Coolify's internal PostgreSQL database
+- coolify-data.tar.zst: /data/coolify directory (configs, docker-compose files)
 - ssh/: SSH keys (if present)
 
 Restore Instructions:
 1. Install Coolify on new VPS
 2. Stop Coolify: docker compose -f /data/coolify/source/docker-compose.yml down
-3. Restore database: gunzip -c coolify-db.sql.gz | docker exec -i coolify-db psql -U coolify
-4. Extract data: tar -xzf coolify-data.tar.gz -C /data
+3. Restore database: zstd -dc coolify-db.sql.zst | docker exec -i coolify-db psql -U coolify
+4. Extract data: tar --zstd -xf coolify-data.tar.zst -C /data
 5. Restore SSH keys to /data/coolify/ssh
 6. Restart Coolify: docker compose -f /data/coolify/source/docker-compose.yml up -d
 EOF
