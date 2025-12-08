@@ -351,7 +351,7 @@ pre_backup_postgres() {
     local CONTAINER=$(find_running_container "$compose_file" "db" "postgres" "postgresql" 2>/dev/null) || return 1
 
     if [[ -n "$PG_DB" ]]; then
-        docker exec "$CONTAINER" pg_dump -U "$PG_USER" "$PG_DB" 2>/dev/null | zstd > "$backup_path/${PG_DB}.sql.zst" || true
+        docker exec "$CONTAINER" pg_dump -U "$PG_USER" --no-owner --no-acl "$PG_DB" 2>/dev/null | zstd > "$backup_path/${PG_DB}.sql.zst" || true
     fi
 }
 

@@ -226,7 +226,7 @@ backup_postgres() {
         [[ -z "$db" ]] && continue
 
         log "  Dumping PostgreSQL database: $db"
-        docker exec "$CONTAINER" pg_dump -U "$PG_USER" "$db" 2>/dev/null | zstd > "$backup_path/${db}.sql.zst" || {
+        docker exec "$CONTAINER" pg_dump -U "$PG_USER" --no-owner --no-acl "$db" 2>/dev/null | zstd > "$backup_path/${db}.sql.zst" || {
             log_error "  Failed to dump database $db"
         }
     done
