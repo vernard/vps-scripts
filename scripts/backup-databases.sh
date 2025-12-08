@@ -139,6 +139,13 @@ backup_mysql() {
         return 1
     fi
 
+    # Verify container is actually a MySQL/MariaDB container
+    local image=$(docker inspect "$CONTAINER" --format '{{.Config.Image}}' 2>/dev/null)
+    if [[ ! "$image" =~ mysql|mariadb ]]; then
+        log_error "Container $CONTAINER is not a MySQL/MariaDB container (image: $image)"
+        return 1
+    fi
+
     # Create backup directory
     mkdir -p "$backup_path"
 
@@ -199,6 +206,13 @@ backup_postgres() {
     local CONTAINER=$(find_running_container "$compose_file" "db" "postgres" "postgresql")
     if [[ $? -ne 0 ]]; then
         log_error "No running PostgreSQL container found for $uuid"
+        return 1
+    fi
+
+    # Verify container is actually a PostgreSQL container
+    local image=$(docker inspect "$CONTAINER" --format '{{.Config.Image}}' 2>/dev/null)
+    if [[ ! "$image" =~ postgres ]]; then
+        log_error "Container $CONTAINER is not a PostgreSQL container (image: $image)"
         return 1
     fi
 
@@ -336,6 +350,10 @@ try_backup_mysql() {
     local container=$(find_running_container "$compose_file" "db" "mysql" "mariadb" 2>/dev/null) || true
     [[ -z "$container" ]] && return 1
 
+    # Verify it's actually a MySQL/MariaDB container
+    local image=$(docker inspect "$container" --format '{{.Config.Image}}' 2>/dev/null)
+    [[ ! "$image" =~ mysql|mariadb ]] && return 1
+
     log "  Trying MySQL backup for $uuid"
     backup_mysql "$uuid" "$env_file" "$compose_file" "$backup_path" 2>/dev/null
 }
@@ -347,6 +365,10 @@ try_backup_postgres() {
     # Quick check for PostgreSQL container
     local container=$(find_running_container "$compose_file" "db" "postgres" "postgresql" 2>/dev/null) || true
     [[ -z "$container" ]] && return 1
+
+    # Verify it's actually a PostgreSQL container
+    local image=$(docker inspect "$container" --format '{{.Config.Image}}' 2>/dev/null)
+    [[ ! "$image" =~ postgres ]] && return 1
 
     log "  Trying PostgreSQL backup for $uuid"
     backup_postgres "$uuid" "$env_file" "$compose_file" "$backup_path" 2>/dev/null

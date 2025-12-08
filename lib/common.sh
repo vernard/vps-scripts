@@ -125,6 +125,7 @@ read_coolify_env_multi() {
 }
 
 # Find all env vars ending with _DATABASE or _DB and return their resolved values (comma-separated)
+# Excludes: SERVICE_NAME_*, SERVICE_FQDN_*, PMA_* (not actual database names)
 find_database_env_vars() {
     local env_file="$1"
 
@@ -133,8 +134,8 @@ find_database_env_vars() {
             set -a
             source "$env_file" 2>/dev/null
             set +a
-            # Get all vars ending with _DATABASE or _DB and print their resolved values
-            for var in $(grep -E "(_DATABASE|_DB)=" "$env_file" | cut -d'=' -f1); do
+            # Get all vars ending with _DATABASE or _DB, excluding SERVICE_NAME_*, PMA_*, etc.
+            for var in $(grep -E "(_DATABASE|_DB)=" "$env_file" | grep -v -E "^(SERVICE_NAME_|SERVICE_FQDN_|PMA_)" | cut -d'=' -f1); do
                 echo "${!var}"
             done | sort -u | paste -sd ',' -
         )
