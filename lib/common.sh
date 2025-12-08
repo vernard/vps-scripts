@@ -81,6 +81,39 @@ sync_to_remote() {
     esac
 }
 
+# Sync from remote storage (reverse of sync_to_remote)
+sync_from_remote() {
+    local target_path="$1"
+
+    case "${REMOTE_SYNC_METHOD:-}" in
+        rsync)
+            if [[ -n "${RSYNC_TARGET:-}" ]]; then
+                log "Fetching from $RSYNC_TARGET"
+                rsync -avz "$RSYNC_TARGET" "$target_path"
+            else
+                log_error "RSYNC_TARGET not configured"
+                return 1
+            fi
+            ;;
+        rclone)
+            if [[ -n "${RCLONE_REMOTE:-}" ]]; then
+                log "Fetching from $RCLONE_REMOTE"
+                rclone sync "$RCLONE_REMOTE" "$target_path"
+            else
+                log_error "RCLONE_REMOTE not configured"
+                return 1
+            fi
+            ;;
+        *)
+            log_error "No remote sync method configured (set REMOTE_SYNC_METHOD)"
+            return 1
+            ;;
+    esac
+
+    log "Remote fetch completed"
+    return 0
+}
+
 # Clean old backups based on retention policy
 cleanup_old_backups() {
     local backup_path="$1"

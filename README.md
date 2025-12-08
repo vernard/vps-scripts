@@ -15,6 +15,7 @@ cp .env.example .env
 |--------|-------------|
 | `backup-databases.sh` | Unified backup for MySQL, PostgreSQL, and SQLite databases |
 | `backup-coolify-setup.sh` | Full Coolify installation backup for VPS migration |
+| `restore.sh` | Interactive restore for databases and file volumes |
 | `update-cf-github-ips.sh` | Updates Cloudflare IP list with GitHub Actions IPs |
 
 ## Configuration
@@ -93,6 +94,51 @@ Auto-detected by volume name patterns in `docker-compose.yml`:
 
 **Multiple databases:** The script automatically finds all env vars ending with `_DATABASE` or `_DB`. You can also add `BACKUP_DATABASES=db1,db2,db3` to your Coolify app's environment variables.
 
+### Restoring Backups
+
+**Interactive mode:**
+
+```bash
+./scripts/restore.sh
+```
+
+Browse and select backups to restore via numbered menus.
+
+**Options:**
+
+| Flag | Description |
+|------|-------------|
+| `--fetch-remote` | Sync from remote storage before restore |
+| `--dry-run` | Preview what would be restored |
+| `--coolify-setup` | Restore full Coolify installation |
+| `-y, --yes` | Skip confirmation prompts |
+| `uuid` | Directly restore specific UUID |
+
+**Examples:**
+
+```bash
+# Interactive mode - browse and select
+./scripts/restore.sh
+
+# Fetch from remote first, then interactive
+./scripts/restore.sh --fetch-remote
+
+# Preview without making changes
+./scripts/restore.sh --dry-run
+
+# Restore specific UUID
+./scripts/restore.sh abc123xyz
+
+# Restore Coolify installation
+./scripts/restore.sh --coolify-setup
+```
+
+**Safety features:**
+- **Pre-restore backup**: Current state saved to `/backups/pre-restore/` before restore
+- **Confirmation prompts**: Requires explicit confirmation before destructive operations
+- **Dry-run mode**: Test restore process without making changes
+- **Validation**: Verifies backup integrity (zstd) before restore
+
 **Remote sync:**
 
 ```bash
@@ -165,8 +211,10 @@ crontab -e
 │   ├── sqlite-data.tar.zst
 │   ├── {volume-name}.tar.zst
 │   └── env.backup
-└── coolify-setup/{timestamp}/
-    ├── coolify-db.sql.zst
-    ├── coolify-data.tar.zst
-    └── manifest.txt
+├── coolify-setup/{timestamp}/
+│   ├── coolify-db.sql.zst
+│   ├── coolify-data.tar.zst
+│   └── manifest.txt
+└── pre-restore/{uuid}/{timestamp}/   # Safety backups before restore
+    └── ...
 ```
