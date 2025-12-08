@@ -91,7 +91,18 @@ read_coolify_env() {
     fi
 }
 
-# Get container name from docker-compose.yml
+# Find docker-compose file (supports .yml and .yaml)
+find_compose_file() {
+    local dir="$1"
+
+    if [[ -f "$dir/docker-compose.yml" ]]; then
+        echo "$dir/docker-compose.yml"
+    elif [[ -f "$dir/docker-compose.yaml" ]]; then
+        echo "$dir/docker-compose.yaml"
+    fi
+}
+
+# Get container name from docker-compose file
 get_container_name() {
     local compose_file="$1"
     local service_name="$2"

@@ -26,7 +26,7 @@ for uuid in "${UUIDS[@]}"; do
 
     APP_DIR="$COOLIFY_APPS_DIR/$uuid"
     APP_ENV="$APP_DIR/.env"
-    COMPOSE_FILE="$APP_DIR/docker-compose.yml"
+    COMPOSE_FILE=$(find_compose_file "$APP_DIR")
 
     if [[ ! -d "$APP_DIR" ]]; then
         log_error "App directory not found: $APP_DIR"

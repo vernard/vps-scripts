@@ -26,7 +26,7 @@ for uuid in "${UUIDS[@]}"; do
 
     SERVICE_DIR="$COOLIFY_SERVICES_DIR/$uuid"
     SERVICE_ENV="$SERVICE_DIR/.env"
-    COMPOSE_FILE="$SERVICE_DIR/docker-compose.yml"
+    COMPOSE_FILE=$(find_compose_file "$SERVICE_DIR")
 
     if [[ ! -d "$SERVICE_DIR" ]]; then
         log_error "Service directory not found: $SERVICE_DIR"
