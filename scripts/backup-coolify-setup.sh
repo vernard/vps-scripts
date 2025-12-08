@@ -39,6 +39,7 @@ log "Backing up Coolify configuration"
 tar --zstd -cf "$BACKUP_PATH/coolify-data.tar.zst" \
     --exclude='*/backups/*' \
     --exclude='*/logs/*' \
+    --exclude='*/ssh/mux/*' \
     -C /data coolify || {
     log_error "Failed to backup Coolify data directory"
 }
@@ -47,6 +48,8 @@ tar --zstd -cf "$BACKUP_PATH/coolify-data.tar.zst" \
 if [[ -d "$COOLIFY_DIR/ssh" ]]; then
     log "Backing up SSH keys"
     cp -r "$COOLIFY_DIR/ssh" "$BACKUP_PATH/ssh"
+    # Remove mux directory (contains runtime socket files)
+    rm -rf "$BACKUP_PATH/ssh/mux"
 fi
 
 # Create manifest with backup info
