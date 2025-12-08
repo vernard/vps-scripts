@@ -1,0 +1,332 @@
+#!/bin/bash
+# Unified database backup script for Coolify services and applications
+# Supports MySQL, PostgreSQL, and SQLite
+#
+# Usage:
+#   ./backup-databases.sh              # Backup all configured databases
+#   ./backup-databases.sh uuid1 uuid2  # Backup specific UUIDs only
+
+set -e
+
+# Load common utilities
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/../lib/common.sh"
+load_env
+
+COOLIFY_SERVICES_DIR="/data/coolify/services"
+COOLIFY_APPS_DIR="/data/coolify/applications"
+BACKUP_BASE="${BACKUP_DIR:-/backups}"
+TIMESTAMP=$(date '+%Y%m%d_%H%M%S')
+
+# Track if any backups were performed
+BACKUP_COUNT=0
+
+# Collect UUIDs from arguments (if provided)
+FILTER_UUIDS=()
+if [[ $# -gt 0 ]]; then
+    FILTER_UUIDS=("$@")
+    log "Filtering backups to UUIDs: ${FILTER_UUIDS[*]}"
+fi
+
+# Check if UUID should be processed (based on filter)
+should_process_uuid() {
+    local uuid="$1"
+
+    # If no filter, process all
+    if [[ ${#FILTER_UUIDS[@]} -eq 0 ]]; then
+        return 0
+    fi
+
+    # Check if UUID is in filter list
+    for filter_uuid in "${FILTER_UUIDS[@]}"; do
+        if [[ "$uuid" == "$filter_uuid" ]]; then
+            return 0
+        fi
+    done
+    return 1
+}
+
+# Find UUID location (service or app) and return base_dir and backup_subdir
+# Sets: UUID_BASE_DIR, UUID_BACKUP_SUBDIR
+find_uuid_location() {
+    local uuid="$1"
+
+    if [[ -d "$COOLIFY_SERVICES_DIR/$uuid" ]]; then
+        UUID_BASE_DIR="$COOLIFY_SERVICES_DIR"
+        UUID_BACKUP_SUBDIR="services"
+        return 0
+    elif [[ -d "$COOLIFY_APPS_DIR/$uuid" ]]; then
+        UUID_BASE_DIR="$COOLIFY_APPS_DIR"
+        UUID_BACKUP_SUBDIR="apps"
+        return 0
+    else
+        return 1
+    fi
+}
+
+# Backup MySQL database
+backup_mysql() {
+    local uuid="$1"
+    local env_file="$2"
+    local compose_file="$3"
+    local backup_path="$4"
+
+    # Read credentials
+    local MYSQL_USER=$(read_coolify_env "$env_file" "MYSQL_USER")
+    local MYSQL_PASSWORD=$(read_coolify_env "$env_file" "MYSQL_PASSWORD")
+    local MYSQL_DB=$(read_coolify_env "$env_file" "MYSQL_DATABASE")
+    local MYSQL_ROOT_PASSWORD=$(read_coolify_env "$env_file" "MYSQL_ROOT_PASSWORD")
+    local BACKUP_DBS=$(read_coolify_env "$env_file" "BACKUP_DATABASES")
+
+    # Prefer root user for backups if available
+    if [[ -n "$MYSQL_ROOT_PASSWORD" ]]; then
+        MYSQL_USER="root"
+        MYSQL_PASSWORD="$MYSQL_ROOT_PASSWORD"
+    fi
+
+    # Collect databases to backup
+    local DBS=""
+    if [[ -n "$BACKUP_DBS" ]]; then
+        DBS="$BACKUP_DBS"
+    else
+        DBS="$MYSQL_DB"
+    fi
+
+    # Add any *_DATABASE or *_DB env vars
+    local EXTRA_DBS=$(find_database_env_vars "$env_file")
+    if [[ -n "$EXTRA_DBS" ]]; then
+        if [[ -n "$DBS" ]]; then
+            DBS="$DBS,$EXTRA_DBS"
+        else
+            DBS="$EXTRA_DBS"
+        fi
+    fi
+
+    # Deduplicate
+    DBS=$(echo "$DBS" | tr ',' '\n' | sort -u | paste -sd ',' -)
+
+    if [[ -z "$MYSQL_USER" ]] || [[ -z "$MYSQL_PASSWORD" ]]; then
+        log_error "Missing MySQL credentials for $uuid"
+        return 1
+    fi
+
+    # Find running container
+    local CONTAINER=$(find_running_container "$compose_file" "db" "mysql" "mariadb")
+    if [[ $? -ne 0 ]]; then
+        log_error "No running MySQL container found for $uuid"
+        return 1
+    fi
+
+    # Create backup directory
+    mkdir -p "$backup_path"
+
+    # Backup each database
+    IFS=',' read -ra DB_LIST <<< "$DBS"
+    for db in "${DB_LIST[@]}"; do
+        db=$(echo "$db" | xargs)
+        [[ -z "$db" ]] && continue
+
+        log "  Dumping MySQL database: $db"
+        docker exec "$CONTAINER" mysqldump -u"$MYSQL_USER" -p"$MYSQL_PASSWORD" "$db" 2>/dev/null | gzip > "$backup_path/${db}.sql.gz" || {
+            log_error "  Failed to dump database $db"
+        }
+    done
+
+    return 0
+}
+
+# Backup PostgreSQL database
+backup_postgres() {
+    local uuid="$1"
+    local env_file="$2"
+    local compose_file="$3"
+    local backup_path="$4"
+
+    # Read credentials
+    local PG_USER=$(read_coolify_env "$env_file" "POSTGRES_USER")
+    local PG_DB=$(read_coolify_env "$env_file" "POSTGRES_DB")
+    local BACKUP_DBS=$(read_coolify_env "$env_file" "BACKUP_DATABASES")
+
+    # Collect databases to backup
+    local DBS=""
+    if [[ -n "$BACKUP_DBS" ]]; then
+        DBS="$BACKUP_DBS"
+    else
+        DBS="$PG_DB"
+    fi
+
+    # Add any *_DATABASE or *_DB env vars
+    local EXTRA_DBS=$(find_database_env_vars "$env_file")
+    if [[ -n "$EXTRA_DBS" ]]; then
+        if [[ -n "$DBS" ]]; then
+            DBS="$DBS,$EXTRA_DBS"
+        else
+            DBS="$EXTRA_DBS"
+        fi
+    fi
+
+    # Deduplicate
+    DBS=$(echo "$DBS" | tr ',' '\n' | sort -u | paste -sd ',' -)
+
+    if [[ -z "$PG_USER" ]]; then
+        log_error "Missing PostgreSQL credentials for $uuid"
+        return 1
+    fi
+
+    # Find running container
+    local CONTAINER=$(find_running_container "$compose_file" "db" "postgres" "postgresql")
+    if [[ $? -ne 0 ]]; then
+        log_error "No running PostgreSQL container found for $uuid"
+        return 1
+    fi
+
+    # Create backup directory
+    mkdir -p "$backup_path"
+
+    # Backup each database
+    IFS=',' read -ra DB_LIST <<< "$DBS"
+    for db in "${DB_LIST[@]}"; do
+        db=$(echo "$db" | xargs)
+        [[ -z "$db" ]] && continue
+
+        log "  Dumping PostgreSQL database: $db"
+        docker exec "$CONTAINER" pg_dump -U "$PG_USER" "$db" 2>/dev/null | gzip > "$backup_path/${db}.sql.gz" || {
+            log_error "  Failed to dump database $db"
+        }
+    done
+
+    return 0
+}
+
+# Backup SQLite database
+backup_sqlite() {
+    local uuid="$1"
+    local env_file="$2"
+    local compose_file="$3"
+    local backup_path="$4"
+
+    # Find service with SQLite data volume
+    local SQLITE_INFO=$(find_sqlite_service "$compose_file")
+    if [[ -z "$SQLITE_INFO" ]]; then
+        log_error "No SQLite data volume (db-data/dbdata) found for $uuid"
+        return 1
+    fi
+
+    # Parse service name and mount path
+    local SERVICE_NAME="${SQLITE_INFO%%:*}"
+    local MOUNT_PATH="${SQLITE_INFO#*:}"
+
+    log "  Found SQLite volume in service '$SERVICE_NAME' at path '$MOUNT_PATH'"
+
+    # Get container name
+    local CONTAINER=$(get_container_name "$compose_file" "$SERVICE_NAME")
+    if [[ -z "$CONTAINER" ]]; then
+        log_error "Could not find container for service $SERVICE_NAME"
+        return 1
+    fi
+
+    # Verify container is running
+    if ! check_container "$CONTAINER"; then
+        log_error "Container '$CONTAINER' is not running for $uuid"
+        return 1
+    fi
+
+    # Create backup directory
+    mkdir -p "$backup_path"
+
+    # Copy SQLite data from container
+    log "  Copying SQLite data from $CONTAINER:$MOUNT_PATH"
+    docker cp "$CONTAINER:$MOUNT_PATH" "$backup_path/sqlite-data" || {
+        log_error "  Failed to copy SQLite data from $CONTAINER"
+        return 1
+    }
+
+    # Compress the backup
+    tar -czf "$backup_path/sqlite-data.tar.gz" -C "$backup_path" sqlite-data && rm -rf "$backup_path/sqlite-data"
+
+    return 0
+}
+
+# Process a single UUID
+process_uuid() {
+    local uuid="$1"
+    local db_type="$2"
+
+    # Find where this UUID lives
+    if ! find_uuid_location "$uuid"; then
+        log_error "UUID not found in services or applications: $uuid"
+        return 1
+    fi
+
+    local dir="$UUID_BASE_DIR/$uuid"
+    local env_file="$dir/.env"
+    local compose_file=$(find_compose_file "$dir")
+    local backup_path="$BACKUP_BASE/$UUID_BACKUP_SUBDIR/$uuid/$TIMESTAMP"
+
+    if [[ -z "$compose_file" ]]; then
+        log_error "No docker-compose file found for $uuid"
+        return 1
+    fi
+
+    log "Backing up $db_type ($UUID_BACKUP_SUBDIR): $uuid"
+
+    case "$db_type" in
+        mysql)
+            backup_mysql "$uuid" "$env_file" "$compose_file" "$backup_path"
+            ;;
+        postgres)
+            backup_postgres "$uuid" "$env_file" "$compose_file" "$backup_path"
+            ;;
+        sqlite)
+            backup_sqlite "$uuid" "$env_file" "$compose_file" "$backup_path"
+            ;;
+        *)
+            log_error "Unknown database type: $db_type"
+            return 1
+            ;;
+    esac
+
+    # Copy .env file on success
+    if [[ $? -eq 0 ]] && [[ -f "$env_file" ]]; then
+        cp "$env_file" "$backup_path/env.backup"
+        ((BACKUP_COUNT++))
+    fi
+}
+
+# Process configured UUIDs for a specific database type
+process_configured() {
+    local config_var="$1"
+    local db_type="$2"
+
+    local uuids="${!config_var:-}"
+    [[ -z "$uuids" ]] && return 0
+
+    IFS=',' read -ra UUID_LIST <<< "$uuids"
+    for uuid in "${UUID_LIST[@]}"; do
+        uuid=$(echo "$uuid" | xargs)
+        [[ -z "$uuid" ]] && continue
+
+        # Check filter
+        if ! should_process_uuid "$uuid"; then
+            continue
+        fi
+
+        process_uuid "$uuid" "$db_type"
+    done
+}
+
+log "Starting database backup"
+
+# Process all configured backups (simplified config vars)
+process_configured "BACKUP_MYSQL" "mysql"
+process_configured "BACKUP_POSTGRES" "postgres"
+process_configured "BACKUP_SQLITE" "sqlite"
+
+# Cleanup and sync
+if [[ $BACKUP_COUNT -gt 0 ]]; then
+    cleanup_old_backups "$BACKUP_BASE/services"
+    cleanup_old_backups "$BACKUP_BASE/apps"
+    sync_to_remote "$BACKUP_BASE"
+fi
+
+log "Database backup completed ($BACKUP_COUNT backups)"

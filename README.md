@@ -13,22 +13,20 @@ cp .env.example .env
 
 | Script | Description |
 |--------|-------------|
-| `update-cf-github-ips.sh` | Updates Cloudflare IP list with GitHub Actions IPs |
-| `backup-app-postgres.sh` | Backup PostgreSQL databases from Coolify applications |
-| `backup-app-mysql.sh` | Backup MySQL databases from Coolify applications |
-| `backup-service-postgres.sh` | Backup PostgreSQL databases from Coolify services |
-| `backup-service-mysql.sh` | Backup MySQL databases from Coolify services |
+| `backup-databases.sh` | Unified backup for MySQL, PostgreSQL, and SQLite databases |
 | `backup-coolify-setup.sh` | Full Coolify installation backup for VPS migration |
+| `update-cf-github-ips.sh` | Updates Cloudflare IP list with GitHub Actions IPs |
 
 ## Configuration
 
 ### Logging
 
 ```bash
-ENABLE_LOGGING=false  # Set to true to write logs to logs/<script>.log
+LOG_TO_SCREEN=true    # Output logs to terminal (default: true)
+ENABLE_LOGGING=false  # Also write logs to logs/<script>.log
 ```
 
-Errors always output to stderr regardless of this setting.
+Errors always output to stderr regardless of these settings.
 
 ### Cloudflare
 
@@ -40,7 +38,7 @@ CF_API_TOKEN=        # My Profile > API Tokens > Create with "Account Filter Lis
 CF_LIST_ID=          # Create list first, find ID in URL when editing
 ```
 
-### Backups
+### Database Backups
 
 **General settings:**
 
@@ -49,23 +47,31 @@ BACKUP_DIR=/backups           # Local backup directory
 BACKUP_RETENTION_DAYS=7       # Auto-delete backups older than this
 ```
 
-**Coolify applications** (your deployed apps):
+**Configure UUIDs by database type** (auto-detects service vs application):
 
 ```bash
-# Find UUIDs: ls /data/coolify/applications/
-BACKUP_APP_POSTGRES="uuid1,uuid2"
-BACKUP_APP_MYSQL="uuid3"
+# Find UUIDs: ls /data/coolify/services/ /data/coolify/applications/
+BACKUP_MYSQL="uuid1,uuid2"
+BACKUP_POSTGRES="uuid3,uuid4"
+BACKUP_SQLITE="uuid5"
 ```
 
-**Coolify services** (standalone databases, redis, etc.):
+**Usage:**
 
 ```bash
-# Find UUIDs: ls /data/coolify/services/
-BACKUP_SERVICE_POSTGRES="uuid4"
-BACKUP_SERVICE_MYSQL=""
+# Backup all configured databases
+./scripts/backup-databases.sh
+
+# Backup specific UUID(s) only
+./scripts/backup-databases.sh uuid1 uuid2
 ```
 
-**Multiple databases:** Add `BACKUP_DATABASES=db1,db2,db3` to your Coolify app's environment variables.
+**Database detection:**
+- MySQL/MariaDB: Uses `MYSQL_USER`, `MYSQL_PASSWORD`, `MYSQL_DATABASE` from `.env`
+- PostgreSQL: Uses `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB` from `.env`
+- SQLite: Auto-detected by volume names containing `db-data` or `dbdata`
+
+**Multiple databases:** The script automatically finds all env vars ending with `_DATABASE` or `_DB`. You can also add `BACKUP_DATABASES=db1,db2,db3` to your Coolify app's environment variables.
 
 **Remote sync:**
 
@@ -93,11 +99,13 @@ crontab -e
 ```
 /backups/
 ├── apps/{uuid}/{timestamp}/
-│   ├── database.sql.gz
-│   └── app.env
+│   ├── {database}.sql.gz      # MySQL/PostgreSQL dumps
+│   ├── sqlite-data.tar.gz     # SQLite data directory
+│   └── env.backup
 ├── services/{uuid}/{timestamp}/
-│   ├── database.sql.gz
-│   └── service.env
+│   ├── {database}.sql.gz
+│   ├── sqlite-data.tar.gz
+│   └── env.backup
 └── coolify-setup/{timestamp}/
     ├── coolify-db.sql.gz
     ├── coolify-data.tar.gz

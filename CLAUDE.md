@@ -1,0 +1,1 @@
+- Always update .env.example, crontab.example, and README.md

@@ -230,3 +230,29 @@ find_running_container() {
     fi
     return 1
 }
+
+# Find service with SQLite data volume and its mount path
+# Returns: "service_name:mount_path" or empty if not found
+# Looks for volumes containing 'db-data' or 'dbdata'
+find_sqlite_service() {
+    local compose_file="$1"
+
+    if [[ -f "$compose_file" ]]; then
+        awk '
+            /^[[:space:]]*[a-zA-Z0-9_-]+:[[:space:]]*$/ {
+                current_service = $1; gsub(/:/, "", current_service)
+            }
+            /volumes:/ && current_service { in_volumes = 1; next }
+            in_volumes && /^[[:space:]]*-/ {
+                if (/db-data|dbdata/) {
+                    mount_path = $0
+                    gsub(/.*:/, "", mount_path)
+                    gsub(/["\047[:space:]]/, "", mount_path)
+                    print current_service ":" mount_path
+                    exit
+                }
+            }
+            in_volumes && /^[[:space:]]*[a-zA-Z]/ && !/^[[:space:]]*-/ { in_volumes = 0 }
+        ' "$compose_file"
+    fi
+}
