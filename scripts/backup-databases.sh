@@ -16,6 +16,7 @@ TIMESTAMP=$(date '+%Y%m%d_%H%M%S')
 
 # Track if any backups were performed
 BACKUP_COUNT=0
+BACKUP_PATHS=()
 
 # Collect UUIDs from arguments (if provided)
 FILTER_UUIDS=()
@@ -361,7 +362,7 @@ try_backup_files() {
     [[ -z "$storage_vols" ]] && return 1
 
     log "  Trying Files backup for $uuid"
-    backup_files "$uuid" "$env_file" "$compose_file" "$backup_path" 2>/dev/null
+    backup_files "$uuid" "$env_file" "$compose_file" "$backup_path"
 }
 
 # Try all backup methods for a UUID (used in auto-discover mode)
@@ -404,6 +405,7 @@ try_all_backups() {
         mkdir -p "$backup_path"
         cp "$env_file" "$backup_path/env.backup"
         ((BACKUP_COUNT++))
+        BACKUP_PATHS+=("$backup_path")
     fi
 }
 
@@ -453,6 +455,7 @@ process_uuid() {
     if [[ $? -eq 0 ]] && [[ -f "$env_file" ]]; then
         cp "$env_file" "$backup_path/env.backup"
         ((BACKUP_COUNT++))
+        BACKUP_PATHS+=("$backup_path")
     fi
 }
 
@@ -502,3 +505,17 @@ if [[ $BACKUP_COUNT -gt 0 ]]; then
 fi
 
 log "Backup completed ($BACKUP_COUNT backups)"
+
+# List all backed up files with sizes
+if [[ ${#BACKUP_PATHS[@]} -gt 0 ]]; then
+    log ""
+    log "Backed up files:"
+    for path in "${BACKUP_PATHS[@]}"; do
+        if [[ -d "$path" ]]; then
+            find "$path" -type f | while read -r file; do
+                size=$(ls -lh "$file" | awk '{print $5}')
+                log "  $size  $file"
+            done
+        fi
+    done
+fi
