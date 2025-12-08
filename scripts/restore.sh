@@ -839,13 +839,18 @@ select_restore_items() {
         if [[ -f "$file" ]]; then
             local filename=$(basename "$file")
             items+=("$filename")
-            # Determine if MySQL or PostgreSQL based on UUID location
+            # Determine if MySQL or PostgreSQL based on running container image
             if find_uuid_location "$uuid"; then
                 local dir="$UUID_BASE_DIR/$uuid"
                 local compose_file=$(find_compose_file "$dir")
-                local pg_container=$(find_running_container "$compose_file" "db" "postgres" "postgresql" 2>/dev/null) || true
-                if [[ -n "$pg_container" ]]; then
-                    item_types+=("postgres")
+                local db_container=$(find_running_container "$compose_file" "db" "postgres" "postgresql" "mysql" "mariadb" 2>/dev/null) || true
+                if [[ -n "$db_container" ]]; then
+                    local image=$(docker inspect "$db_container" --format '{{.Config.Image}}' 2>/dev/null)
+                    if [[ "$image" =~ postgres ]]; then
+                        item_types+=("postgres")
+                    else
+                        item_types+=("mysql")
+                    fi
                 else
                     item_types+=("mysql")
                 fi
