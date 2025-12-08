@@ -498,6 +498,8 @@ restore_postgres() {
 
     # Drop and recreate database before restore
     log "  Dropping existing database $db_name..."
+    # Terminate active connections first (required to drop database)
+    docker exec "$CONTAINER" psql -U "$PG_USER" -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '$db_name' AND pid <> pg_backend_pid();" postgres 2>/dev/null || true
     docker exec "$CONTAINER" psql -U "$PG_USER" -c "DROP DATABASE IF EXISTS \"$db_name\";" postgres 2>/dev/null || true
     docker exec "$CONTAINER" psql -U "$PG_USER" -c "CREATE DATABASE \"$db_name\";" postgres || {
         log_error "Failed to create database $db_name"
