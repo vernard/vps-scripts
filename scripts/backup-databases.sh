@@ -1,10 +1,11 @@
 #!/bin/bash
 # Unified database backup script for Coolify services and applications
-# Supports MySQL, PostgreSQL, and SQLite
+# Supports MySQL, PostgreSQL, SQLite, and file storage
 #
 # Usage:
-#   ./backup-databases.sh              # Backup all configured databases
-#   ./backup-databases.sh uuid1 uuid2  # Backup specific UUIDs only
+#   ./backup-databases.sh                       # Auto-discover and backup databases
+#   ./backup-databases.sh uuid1 uuid2           # Backup specific UUIDs (databases)
+#   ./backup-databases.sh --files-only uuid1    # Backup file storage only
 
 # Load common utilities
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -18,19 +19,29 @@ TIMESTAMP=$(date '+%Y%m%d_%H%M%S')
 BACKUP_COUNT=0
 BACKUP_PATHS=()
 
+# Parse --files-only flag
+FILES_ONLY=false
+if [[ "${1:-}" == "--files-only" ]]; then
+    FILES_ONLY=true
+    shift
+fi
+
 # Collect UUIDs from arguments (if provided)
 FILTER_UUIDS=()
 if [[ $# -gt 0 ]]; then
     FILTER_UUIDS=("$@")
-    log "Filtering backups to UUIDs: ${FILTER_UUIDS[*]}"
+    if [[ "$FILES_ONLY" == true ]]; then
+        log "File-only backup for UUIDs: ${FILTER_UUIDS[*]}"
+    else
+        log "Filtering backups to UUIDs: ${FILTER_UUIDS[*]}"
+    fi
 fi
 
-# Check if manual config exists
+# Check if manual database config exists (excludes BACKUP_FILES)
 has_manual_config() {
     [[ -n "${BACKUP_MYSQL:-}" ]] || \
     [[ -n "${BACKUP_POSTGRES:-}" ]] || \
-    [[ -n "${BACKUP_SQLITE:-}" ]] || \
-    [[ -n "${BACKUP_FILES:-}" ]]
+    [[ -n "${BACKUP_SQLITE:-}" ]]
 }
 
 # Determine if auto-discovery mode should be used
@@ -383,7 +394,7 @@ try_all_backups() {
 
     log "Auto-backup ($UUID_BACKUP_SUBDIR): $uuid"
 
-    # Try each backup method
+    # Try each database backup method (files excluded from auto-discover)
     if try_backup_mysql "$uuid" "$env_file" "$compose_file" "$backup_path"; then
         success=true
     fi
@@ -393,10 +404,6 @@ try_all_backups() {
     fi
 
     if try_backup_sqlite "$uuid" "$env_file" "$compose_file" "$backup_path"; then
-        success=true
-    fi
-
-    if try_backup_files "$uuid" "$env_file" "$compose_file" "$backup_path"; then
         success=true
     fi
 
@@ -483,7 +490,16 @@ process_configured() {
 
 log "Starting backup"
 
-if [[ "$AUTO_DISCOVER" == true ]]; then
+if [[ "$FILES_ONLY" == true ]]; then
+    # Files-only mode: backup file storage for specified UUIDs
+    if [[ ${#FILTER_UUIDS[@]} -eq 0 ]]; then
+        log_error "--files-only requires at least one UUID"
+        exit 1
+    fi
+    for uuid in "${FILTER_UUIDS[@]}"; do
+        process_uuid "$uuid" "files"
+    done
+elif [[ "$AUTO_DISCOVER" == true ]]; then
     log "No BACKUP_* config found - auto-discovering running services"
     while IFS= read -r uuid; do
         [[ -z "$uuid" ]] && continue

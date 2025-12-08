@@ -51,8 +51,10 @@ BACKUP_RETENTION_DAYS=7       # Auto-delete backups older than this
 
 Leave all `BACKUP_*` variables empty. The script will:
 1. Find all running Coolify services and applications
-2. Try all backup methods (MySQL, PostgreSQL, SQLite, Files)
+2. Try database backup methods (MySQL, PostgreSQL, SQLite)
 3. Skip methods that don't apply to each service
+
+Note: File storage is excluded from auto-discovery (too large for daily backups). Use `--files-only` for weekly/monthly file backups.
 
 **Manual configuration** (optional):
 
@@ -64,16 +66,19 @@ BACKUP_SQLITE="uuid5"
 BACKUP_FILES="uuid6"         # File storage volumes (uploads, media, etc.)
 ```
 
-Setting any `BACKUP_*` variable disables auto-discovery.
+Setting any database `BACKUP_*` variable disables auto-discovery.
 
 **Usage:**
 
 ```bash
-# Auto-discover and backup all running services
+# Auto-discover and backup databases
 ./scripts/backup-databases.sh
 
-# Backup specific UUID(s) only
+# Backup specific UUID(s) - databases only
 ./scripts/backup-databases.sh uuid1 uuid2
+
+# Backup file storage only (for weekly/monthly cron)
+./scripts/backup-databases.sh --files-only uuid1 uuid2
 ```
 
 **Database detection:**

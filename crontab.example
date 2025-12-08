@@ -6,8 +6,11 @@
 # Update Cloudflare IP list with GitHub Actions IPs (every 6 hours)
 0 */6 * * * /root/Development/vps-scripts/scripts/update-cf-github-ips.sh
 
-# Backup all databases - MySQL, PostgreSQL, SQLite (daily at 2 AM)
+# Backup databases - auto-discovers MySQL, PostgreSQL, SQLite (daily at 2 AM)
 0 2 * * * /root/Development/vps-scripts/scripts/backup-databases.sh
+
+# Backup file storage - weekly on Sunday at 3 AM (replace with your UUIDs)
+# 0 3 * * 0 /root/Development/vps-scripts/scripts/backup-databases.sh --files-only uuid1 uuid2
 
 # Full Coolify setup backup (weekly on Sunday at 4 AM)
 0 4 * * 0 /root/Development/vps-scripts/scripts/backup-coolify-setup.sh
