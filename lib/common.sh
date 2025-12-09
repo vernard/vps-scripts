@@ -516,7 +516,7 @@ Sent from $hostname at $(date '+%Y-%m-%d %H:%M:%S %Z')
             --port="$smtp_port" \
             --auth=on \
             --user="$smtp_user" \
-            --password="$smtp_pass" \
+            --passwordeval="printf '%s' '$smtp_pass'" \
             --tls=on \
             --from="$from" \
             "$to" 2>&1) && result=0
