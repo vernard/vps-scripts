@@ -520,17 +520,6 @@ Sent from $hostname at $(date '+%Y-%m-%d %H:%M:%S %Z')
             --tls=on \
             --from="$from" \
             "$to" 2>&1) && result=0
-    elif command -v curl &>/dev/null && [[ -n "$smtp_user" ]]; then
-        method_used="curl"
-        # Port 465 uses implicit TLS (smtps://), port 587/25 use STARTTLS (smtp://)
-        local smtp_protocol="smtp"
-        [[ "$smtp_port" == "465" ]] && smtp_protocol="smtps"
-        error_output=$(curl -sS --url "${smtp_protocol}://${smtp_host}:${smtp_port}" \
-            --ssl-reqd \
-            --mail-from "$from" \
-            --mail-rcpt "$to" \
-            --user "${smtp_user}:${smtp_pass}" \
-            -T - <<< "$email_content" 2>&1) && result=0
     elif command -v mail &>/dev/null; then
         method_used="mail"
         error_output=$(echo "$body" | mail -s "$subject" "$to" 2>&1) && result=0

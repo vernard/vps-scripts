@@ -220,6 +220,17 @@ DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/xxx/yyy
 
 ### Email Notifications
 
+Requires `msmtp` to be installed:
+
+```bash
+# Debian/Ubuntu
+apt install msmtp
+# Note: May suggest apparmor - it's optional, not required
+
+# Alpine
+apk add msmtp
+```
+
 Receive detailed reports on failures (or optionally on every run):
 
 ```bash
