@@ -26,12 +26,33 @@ FAIL_COUNT=0
 BACKED_UP_LIST=""
 ERROR_MESSAGES=""
 
+# Get service/application name from Coolify database
+get_coolify_name() {
+    local uuid="$1"
+    local name=""
+
+    # Query Coolify's PostgreSQL for service or application name
+    name=$(docker exec coolify-db psql -U coolify -d coolify -t -c \
+        "SELECT name FROM services WHERE uuid='$uuid' UNION SELECT name FROM applications WHERE uuid='$uuid'" 2>/dev/null | tr -d ' \n')
+
+    if [[ -n "$name" ]]; then
+        echo "$name"
+    else
+        echo ""  # Return empty if not found
+    fi
+}
+
 # Record a successful backup
 record_success() {
     local uuid="$1"
     local type="$2"
+    local name=$(get_coolify_name "$uuid")
     ((SUCCESS_COUNT++))
-    BACKED_UP_LIST+="• $uuid ($type)"$'\n'
+    if [[ -n "$name" ]]; then
+        BACKED_UP_LIST+="• $name ($uuid) - $type"$'\n'
+    else
+        BACKED_UP_LIST+="• $uuid ($type)"$'\n'
+    fi
 }
 
 # Record a failed backup
@@ -39,8 +60,13 @@ record_failure() {
     local uuid="$1"
     local type="$2"
     local msg="$3"
+    local name=$(get_coolify_name "$uuid")
     ((FAIL_COUNT++))
-    ERROR_MESSAGES+="• $uuid ($type): $msg"$'\n'
+    if [[ -n "$name" ]]; then
+        ERROR_MESSAGES+="• $name ($uuid) - $type: $msg"$'\n'
+    else
+        ERROR_MESSAGES+="• $uuid ($type): $msg"$'\n'
+    fi
 }
 
 # Parse --files-only flag

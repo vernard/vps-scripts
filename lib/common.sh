@@ -522,7 +522,10 @@ Sent from $hostname at $(date '+%Y-%m-%d %H:%M:%S %Z')
             "$to" 2>&1) && result=0
     elif command -v curl &>/dev/null && [[ -n "$smtp_user" ]]; then
         method_used="curl"
-        error_output=$(curl -sS --url "smtps://${smtp_host}:${smtp_port}" \
+        # Port 465 uses implicit TLS (smtps://), port 587/25 use STARTTLS (smtp://)
+        local smtp_protocol="smtp"
+        [[ "$smtp_port" == "465" ]] && smtp_protocol="smtps"
+        error_output=$(curl -sS --url "${smtp_protocol}://${smtp_host}:${smtp_port}" \
             --ssl-reqd \
             --mail-from "$from" \
             --mail-rcpt "$to" \
@@ -656,16 +659,6 @@ notify_backup_complete() {
                 "✅ Success" "$success_count" \
                 "Duration" "$duration_str"
             )
-        fi
-
-        # Add backed up list as separate field if available
-        if [[ -n "$backed_up_list" ]]; then
-            # Remove bullets and convert newlines to commas for compact display
-            local compact_list=$(echo "$backed_up_list" | sed 's/^• //g' | tr '\n' ', ' | sed 's/, $//' | sed 's/,$//')
-            # Escape quotes for JSON
-            compact_list=$(echo "$compact_list" | sed 's/"/\\"/g')
-            # Insert before closing bracket (inline:false for full width)
-            fields="${fields%]},{\"name\":\"📦 Backed Up\",\"value\":\"$compact_list\",\"inline\":false}]"
         fi
 
         if send_discord "$title" "$description" "$color" "$fields"; then
