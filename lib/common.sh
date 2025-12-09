@@ -644,11 +644,29 @@ notify_backup_complete() {
         local title="$emoji Backup ${status^}: $script_name"
         local description="Completed at $(date '+%Y-%m-%d %H:%M:%S %Z')"
 
-        local fields=$(build_discord_fields \
-            "✓ Success" "$success_count" \
-            "✗ Failed" "$fail_count" \
-            "Duration" "$duration_str"
-        )
+        local fields
+        if [[ $fail_count -gt 0 ]]; then
+            fields=$(build_discord_fields \
+                "✅ Success" "$success_count" \
+                "❌ Failed" "$fail_count" \
+                "Duration" "$duration_str"
+            )
+        else
+            fields=$(build_discord_fields \
+                "✅ Success" "$success_count" \
+                "Duration" "$duration_str"
+            )
+        fi
+
+        # Add backed up list as separate field if available
+        if [[ -n "$backed_up_list" ]]; then
+            # Remove bullets and convert newlines to commas for compact display
+            local compact_list=$(echo "$backed_up_list" | sed 's/^• //g' | tr '\n' ', ' | sed 's/, $//' | sed 's/,$//')
+            # Escape quotes for JSON
+            compact_list=$(echo "$compact_list" | sed 's/"/\\"/g')
+            # Insert before closing bracket (inline:false for full width)
+            fields="${fields%]},{\"name\":\"📦 Backed Up\",\"value\":\"$compact_list\",\"inline\":false}]"
+        fi
 
         if send_discord "$title" "$description" "$color" "$fields"; then
             discord_result="sent"
