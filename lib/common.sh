@@ -425,9 +425,12 @@ discover_running_uuids() {
 # Send Discord webhook notification
 # Args: title, description, color (decimal), [fields_json]
 # Color: 3066993 (green), 15158332 (red), 15844367 (yellow)
+# Returns: 0 on success, 1 on failure, 2 if not configured
 send_discord() {
     local webhook_url="${DISCORD_WEBHOOK_URL:-}"
-    [[ -z "$webhook_url" ]] && return 0
+    if [[ -z "$webhook_url" ]]; then
+        return 2  # Not configured
+    fi
 
     local title="$1"
     local description="$2"
@@ -449,14 +452,28 @@ send_discord() {
 EOF
 )
 
-    curl -s -H "Content-Type: application/json" -d "$payload" "$webhook_url" >/dev/null 2>&1
+    local response
+    local http_code
+    response=$(curl -s -w "\n%{http_code}" -H "Content-Type: application/json" -d "$payload" "$webhook_url" 2>&1)
+    http_code=$(echo "$response" | tail -n1)
+
+    if [[ "$http_code" =~ ^2[0-9][0-9]$ ]]; then
+        log "Discord notification sent"
+        return 0
+    else
+        log_error "Discord notification failed (HTTP $http_code)"
+        return 1
+    fi
 }
 
 # Send email notification
 # Args: subject, body
+# Returns: 0 on success, 1 on failure, 2 if not configured
 send_email() {
     local smtp_host="${SMTP_HOST:-}"
-    [[ -z "$smtp_host" ]] && return 0
+    if [[ -z "$smtp_host" ]]; then
+        return 2  # Not configured
+    fi
 
     local subject="$1"
     local body="$2"
@@ -467,7 +484,10 @@ send_email() {
     local smtp_pass="${SMTP_PASS:-}"
     local hostname="${HOSTNAME:-$(hostname)}"
 
-    [[ -z "$to" ]] && return 0
+    if [[ -z "$to" ]]; then
+        log_error "Email not sent: EMAIL_TO not configured"
+        return 2
+    fi
 
     # Add hostname to subject
     subject="[$hostname] $subject"
@@ -484,10 +504,14 @@ $body
 Sent from $hostname at $(date '+%Y-%m-%d %H:%M:%S %Z')
 "
 
+    local error_output
+    local result=1
+    local method_used=""
+
     # Try different mail methods
     if command -v msmtp &>/dev/null && [[ -n "$smtp_user" ]]; then
-        # Use msmtp with inline config
-        echo "$email_content" | msmtp \
+        method_used="msmtp"
+        error_output=$(echo "$email_content" | msmtp \
             --host="$smtp_host" \
             --port="$smtp_port" \
             --auth=on \
@@ -495,31 +519,46 @@ Sent from $hostname at $(date '+%Y-%m-%d %H:%M:%S %Z')
             --password="$smtp_pass" \
             --tls=on \
             --from="$from" \
-            "$to" 2>/dev/null
+            "$to" 2>&1) && result=0
     elif command -v curl &>/dev/null && [[ -n "$smtp_user" ]]; then
-        # Use curl for SMTP
-        curl -s --url "smtps://${smtp_host}:${smtp_port}" \
+        method_used="curl"
+        error_output=$(curl -s --url "smtps://${smtp_host}:${smtp_port}" \
             --ssl-reqd \
             --mail-from "$from" \
             --mail-rcpt "$to" \
             --user "${smtp_user}:${smtp_pass}" \
-            -T - <<< "$email_content" 2>/dev/null
+            -T - <<< "$email_content" 2>&1) && result=0
     elif command -v mail &>/dev/null; then
-        # Fall back to system mail
-        echo "$body" | mail -s "$subject" "$to" 2>/dev/null
+        method_used="mail"
+        error_output=$(echo "$body" | mail -s "$subject" "$to" 2>&1) && result=0
     elif command -v sendmail &>/dev/null; then
-        # Fall back to sendmail
-        echo "$email_content" | sendmail -t 2>/dev/null
+        method_used="sendmail"
+        error_output=$(echo "$email_content" | sendmail -t 2>&1) && result=0
+    else
+        log_error "Email not sent: no mail command available (tried msmtp, curl, mail, sendmail)"
+        return 1
+    fi
+
+    if [[ $result -eq 0 ]]; then
+        log "Email sent to $to (via $method_used)"
+        return 0
+    else
+        log_error "Email failed via $method_used: $error_output"
+        return 1
     fi
 }
 
 # Ping healthcheck URL (for dead man's switch monitoring)
 # Args: [status] - "start", "success", "fail", or empty for simple ping
+# Returns: 0 on success, 1 on failure, 2 if not configured
 ping_healthcheck() {
     local url="${HEALTHCHECK_URL:-}"
-    [[ -z "$url" ]] && return 0
+    if [[ -z "$url" ]]; then
+        return 2  # Not configured
+    fi
 
     local status="${1:-}"
+    local status_label="${status:-ping}"
 
     case "$status" in
         start) url="${url}/start" ;;
@@ -528,7 +567,14 @@ ping_healthcheck() {
         *) ;; # Simple ping
     esac
 
-    curl -fsS --retry 3 --max-time 10 "$url" >/dev/null 2>&1
+    local error_output
+    if error_output=$(curl -fsS --retry 3 --max-time 10 "$url" 2>&1); then
+        log "Healthcheck ping sent ($status_label)"
+        return 0
+    else
+        log_error "Healthcheck ping failed ($status_label): $error_output"
+        return 1
+    fi
 }
 
 # Build JSON fields array for Discord embed
@@ -588,6 +634,11 @@ notify_backup_complete() {
         duration_str="${duration}s"
     fi
 
+    # Track notification results for summary
+    local discord_result="not configured"
+    local email_result="not configured"
+    local healthcheck_result="not configured"
+
     # === DISCORD (Summary) ===
     if [[ -n "${DISCORD_WEBHOOK_URL:-}" ]]; then
         local title="$emoji Backup ${status^}: $script_name"
@@ -599,11 +650,15 @@ notify_backup_complete() {
             "Duration" "$duration_str"
         )
 
-        send_discord "$title" "$description" "$color" "$fields"
+        if send_discord "$title" "$description" "$color" "$fields"; then
+            discord_result="sent"
+        else
+            discord_result="failed"
+        fi
     fi
 
     # === EMAIL (Detailed on failure, or if NOTIFY_EMAIL_ALWAYS=true) ===
-    if [[ -n "${SMTP_HOST:-}" && -n "${EMAIL_TO:-}" ]]; then
+    if [[ -n "${SMTP_HOST:-}" ]]; then
         local should_email=false
 
         if [[ "$status" != "success" ]]; then
@@ -645,14 +700,29 @@ $error_messages
 "
             fi
 
-            send_email "$subject" "$body"
+            if send_email "$subject" "$body"; then
+                email_result="sent"
+            else
+                email_result="failed"
+            fi
+        else
+            email_result="skipped (success, NOTIFY_EMAIL_ALWAYS=false)"
         fi
     fi
 
     # === HEALTHCHECK PING ===
-    if [[ "$status" == "success" ]]; then
-        ping_healthcheck "success"
-    else
-        ping_healthcheck "fail"
+    if [[ -n "${HEALTHCHECK_URL:-}" ]]; then
+        if [[ "$status" == "success" ]]; then
+            ping_healthcheck "success" && healthcheck_result="sent" || healthcheck_result="failed"
+        else
+            ping_healthcheck "fail" && healthcheck_result="sent" || healthcheck_result="failed"
+        fi
     fi
+
+    # === SUMMARY ===
+    log ""
+    log "Notifications:"
+    log "  Discord:     $discord_result"
+    log "  Email:       $email_result"
+    log "  Healthcheck: $healthcheck_result"
 }
