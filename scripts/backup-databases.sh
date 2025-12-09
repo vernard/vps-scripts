@@ -643,10 +643,17 @@ fi
 END_TIME=$(date +%s)
 DURATION=$((END_TIME - START_TIME))
 
+# Gather backup storage statistics
+get_backup_stats "$BACKUP_BASE"
+
 notify_backup_complete \
     "backup-databases" \
     "$SUCCESS_COUNT" \
     "$FAIL_COUNT" \
     "$BACKED_UP_LIST" \
     "$ERROR_MESSAGES" \
-    "$DURATION"
+    "$DURATION" \
+    "$BACKUP_TOTAL_SIZE" \
+    "$BACKUP_TOTAL_COUNT" \
+    "$BACKUP_OLDEST_DATE" \
+    "$BACKUP_BREAKDOWN"

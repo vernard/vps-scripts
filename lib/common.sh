@@ -139,6 +139,92 @@ cleanup_old_backups() {
     fi
 }
 
+# Get backup storage statistics
+# Args: backup_dir
+# Outputs to global variables: BACKUP_TOTAL_SIZE, BACKUP_TOTAL_COUNT, BACKUP_OLDEST_DATE, BACKUP_BREAKDOWN
+get_backup_stats() {
+    local backup_dir="$1"
+    local total_bytes=0
+    local total_count=0
+    local oldest_timestamp=""
+    local breakdown=""
+
+    BACKUP_TOTAL_SIZE=""
+    BACKUP_TOTAL_COUNT=0
+    BACKUP_OLDEST_DATE=""
+    BACKUP_BREAKDOWN=""
+
+    [[ -d "$backup_dir" ]] || return
+
+    # Iterate through services/ and apps/
+    for subdir in services apps; do
+        [[ -d "$backup_dir/$subdir" ]] || continue
+
+        for uuid_dir in "$backup_dir/$subdir"/*/; do
+            [[ -d "$uuid_dir" ]] || continue
+            local uuid=$(basename "$uuid_dir")
+
+            # Get service name from Coolify DB if available
+            local name=""
+            if command -v docker &>/dev/null; then
+                name=$(docker exec coolify-db psql -U coolify -d coolify -t -c \
+                    "SELECT name FROM services WHERE uuid='$uuid' UNION SELECT name FROM applications WHERE uuid='$uuid'" 2>/dev/null | tr -d ' \n')
+            fi
+
+            # Calculate size for this UUID
+            local uuid_bytes=$(du -sb "$uuid_dir" 2>/dev/null | cut -f1)
+            uuid_bytes=${uuid_bytes:-0}
+            total_bytes=$((total_bytes + uuid_bytes))
+
+            # Count backup sets (timestamp directories) and find oldest
+            local uuid_count=0
+            local uuid_oldest=""
+            for ts_dir in "$uuid_dir"/*/; do
+                [[ -d "$ts_dir" ]] || continue
+                ((uuid_count++))
+                ((total_count++))
+                local ts=$(basename "$ts_dir")
+                # Timestamp format: YYYYMMDD_HHMMSS
+                if [[ -z "$uuid_oldest" ]] || [[ "$ts" < "$uuid_oldest" ]]; then
+                    uuid_oldest="$ts"
+                fi
+                if [[ -z "$oldest_timestamp" ]] || [[ "$ts" < "$oldest_timestamp" ]]; then
+                    oldest_timestamp="$ts"
+                fi
+            done
+
+            # Format size
+            local uuid_size_human=$(numfmt --to=iec-i --suffix=B "$uuid_bytes" 2>/dev/null || echo "${uuid_bytes}B")
+
+            # Format oldest date for this UUID (YYYYMMDD_HHMMSS -> YYYY-MM-DD)
+            local uuid_oldest_formatted=""
+            if [[ -n "$uuid_oldest" ]]; then
+                uuid_oldest_formatted="${uuid_oldest:0:4}-${uuid_oldest:4:2}-${uuid_oldest:6:2}"
+            fi
+
+            # Build breakdown line
+            if [[ -n "$name" ]]; then
+                breakdown+="• $name ($uuid): $uuid_size_human, $uuid_count backups, oldest: $uuid_oldest_formatted"$'\n'
+            else
+                breakdown+="• $uuid: $uuid_size_human, $uuid_count backups, oldest: $uuid_oldest_formatted"$'\n'
+            fi
+        done
+    done
+
+    # Format total size
+    BACKUP_TOTAL_SIZE=$(numfmt --to=iec-i --suffix=B "$total_bytes" 2>/dev/null || echo "${total_bytes}B")
+    BACKUP_TOTAL_COUNT=$total_count
+
+    # Format oldest date (YYYYMMDD_HHMMSS -> YYYY-MM-DD)
+    if [[ -n "$oldest_timestamp" ]]; then
+        BACKUP_OLDEST_DATE="${oldest_timestamp:0:4}-${oldest_timestamp:4:2}-${oldest_timestamp:6:2}"
+    else
+        BACKUP_OLDEST_DATE="N/A"
+    fi
+
+    BACKUP_BREAKDOWN="$breakdown"
+}
+
 # Read env var from a Coolify app's .env file (resolves variable references)
 read_coolify_env() {
     local env_file="$1"
@@ -594,7 +680,8 @@ build_discord_fields() {
 }
 
 # Notify backup completion (sends to both Discord and Email based on config)
-# Args: script_name, success_count, fail_count, backed_up_list, error_messages, duration_seconds
+# Args: script_name, success_count, fail_count, backed_up_list, error_messages, duration_seconds,
+#       total_size, backup_count, oldest_date, size_breakdown
 notify_backup_complete() {
     local script_name="$1"
     local success_count="${2:-0}"
@@ -602,6 +689,10 @@ notify_backup_complete() {
     local backed_up_list="${4:-}"
     local error_messages="${5:-}"
     local duration="${6:-0}"
+    local total_size="${7:-}"
+    local backup_count="${8:-}"
+    local oldest_date="${9:-}"
+    local size_breakdown="${10:-}"
 
     local total=$((success_count + fail_count))
     local status="success"
@@ -641,13 +732,24 @@ notify_backup_complete() {
             fields=$(build_discord_fields \
                 "✅ Success" "$success_count" \
                 "❌ Failed" "$fail_count" \
-                "Duration" "$duration_str"
+                "⏱️ Duration" "$duration_str"
             )
         else
             fields=$(build_discord_fields \
                 "✅ Success" "$success_count" \
-                "Duration" "$duration_str"
+                "⏱️ Duration" "$duration_str"
             )
+        fi
+
+        # Add storage info if available
+        if [[ -n "$total_size" ]]; then
+            fields="${fields%]},{\"name\":\"💾 Total Size\",\"value\":\"$total_size\",\"inline\":true}]"
+        fi
+        if [[ -n "$backup_count" ]]; then
+            fields="${fields%]},{\"name\":\"📁 Backups\",\"value\":\"$backup_count\",\"inline\":true}]"
+        fi
+        if [[ -n "$oldest_date" ]]; then
+            fields="${fields%]},{\"name\":\"📅 Oldest\",\"value\":\"$oldest_date\",\"inline\":true}]"
         fi
 
         if send_discord "$title" "$description" "$color" "$fields"; then
@@ -698,6 +800,24 @@ ERRORS
 ------
 $error_messages
 "
+            fi
+
+            # Add storage statistics if available
+            if [[ -n "$total_size" ]]; then
+                body+="
+BACKUP STORAGE
+--------------
+Total Size: $total_size
+Total Backup Sets: $backup_count
+Oldest Backup: $oldest_date
+"
+            fi
+
+            if [[ -n "$size_breakdown" ]]; then
+                body+="
+PER-SERVICE BREAKDOWN
+---------------------
+$size_breakdown"
             fi
 
             if send_email "$subject" "$body"; then
