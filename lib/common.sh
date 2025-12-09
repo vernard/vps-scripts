@@ -522,7 +522,7 @@ Sent from $hostname at $(date '+%Y-%m-%d %H:%M:%S %Z')
             "$to" 2>&1) && result=0
     elif command -v curl &>/dev/null && [[ -n "$smtp_user" ]]; then
         method_used="curl"
-        error_output=$(curl -s --url "smtps://${smtp_host}:${smtp_port}" \
+        error_output=$(curl -sS --url "smtps://${smtp_host}:${smtp_port}" \
             --ssl-reqd \
             --mail-from "$from" \
             --mail-rcpt "$to" \
