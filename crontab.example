@@ -15,6 +15,14 @@
 # Or prefix individual commands:
 # 0 2 * * * TZ=America/New_York /path/to/script.sh
 
+# NOTIFICATIONS & MONITORING
+# Configure in .env file:
+#   DISCORD_WEBHOOK_URL    - Discord notifications (summary after each run)
+#   SMTP_HOST/EMAIL_TO     - Email notifications (detailed, failures by default)
+#   HEALTHCHECK_URL        - Dead man's switch (e.g., healthchecks.io)
+#
+# Scripts automatically send notifications - no wrapper needed!
+
 # Update Cloudflare IP list with GitHub Actions IPs (every 6 hours)
 0 */6 * * * /root/Development/vps-scripts/scripts/update-cf-github-ips.sh
 

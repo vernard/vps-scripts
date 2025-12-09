@@ -14,10 +14,34 @@ load_env
 
 BACKUP_BASE="${BACKUP_DIR:-/backups}"
 TIMESTAMP=$(date '+%Y%m%d_%H%M%S')
+START_TIME=$(date +%s)
 
 # Track if any backups were performed
 BACKUP_COUNT=0
 BACKUP_PATHS=()
+
+# Track for notifications
+SUCCESS_COUNT=0
+FAIL_COUNT=0
+BACKED_UP_LIST=""
+ERROR_MESSAGES=""
+
+# Record a successful backup
+record_success() {
+    local uuid="$1"
+    local type="$2"
+    ((SUCCESS_COUNT++))
+    BACKED_UP_LIST+="• $uuid ($type)"$'\n'
+}
+
+# Record a failed backup
+record_failure() {
+    local uuid="$1"
+    local type="$2"
+    local msg="$3"
+    ((FAIL_COUNT++))
+    ERROR_MESSAGES+="• $uuid ($type): $msg"$'\n'
+}
 
 # Parse --files-only flag
 FILES_ONLY=false
@@ -411,6 +435,7 @@ try_all_backups() {
     local compose_file=$(find_compose_file "$dir")
     local backup_path="$BACKUP_BASE/$UUID_BACKUP_SUBDIR/$uuid/$TIMESTAMP"
     local success=false
+    local backup_types=""
 
     [[ -z "$compose_file" ]] && return 1
 
@@ -419,14 +444,17 @@ try_all_backups() {
     # Try each database backup method (files excluded from auto-discover)
     if try_backup_mysql "$uuid" "$env_file" "$compose_file" "$backup_path"; then
         success=true
+        backup_types+="mysql,"
     fi
 
     if try_backup_postgres "$uuid" "$env_file" "$compose_file" "$backup_path"; then
         success=true
+        backup_types+="postgres,"
     fi
 
     if try_backup_sqlite "$uuid" "$env_file" "$compose_file" "$backup_path"; then
         success=true
+        backup_types+="sqlite,"
     fi
 
     # Copy .env if any backup succeeded
@@ -435,6 +463,9 @@ try_all_backups() {
         cp "$env_file" "$backup_path/env.backup"
         ((BACKUP_COUNT++))
         BACKUP_PATHS+=("$backup_path")
+        # Record success with the types that worked
+        backup_types="${backup_types%,}"  # Remove trailing comma
+        record_success "$uuid" "$backup_types"
     fi
 }
 
@@ -446,6 +477,7 @@ process_uuid() {
     # Find where this UUID lives
     if ! find_uuid_location "$uuid"; then
         log_error "UUID not found in services or applications: $uuid"
+        record_failure "$uuid" "$db_type" "UUID not found"
         return 1
     fi
 
@@ -456,35 +488,41 @@ process_uuid() {
 
     if [[ -z "$compose_file" ]]; then
         log_error "No docker-compose file found for $uuid"
+        record_failure "$uuid" "$db_type" "No docker-compose file"
         return 1
     fi
 
     log "Backing up $db_type ($UUID_BACKUP_SUBDIR): $uuid"
 
+    local backup_result=0
     case "$db_type" in
         mysql)
-            backup_mysql "$uuid" "$env_file" "$compose_file" "$backup_path"
+            backup_mysql "$uuid" "$env_file" "$compose_file" "$backup_path" || backup_result=$?
             ;;
         postgres)
-            backup_postgres "$uuid" "$env_file" "$compose_file" "$backup_path"
+            backup_postgres "$uuid" "$env_file" "$compose_file" "$backup_path" || backup_result=$?
             ;;
         sqlite)
-            backup_sqlite "$uuid" "$env_file" "$compose_file" "$backup_path"
+            backup_sqlite "$uuid" "$env_file" "$compose_file" "$backup_path" || backup_result=$?
             ;;
         files)
-            backup_files "$uuid" "$env_file" "$compose_file" "$backup_path"
+            backup_files "$uuid" "$env_file" "$compose_file" "$backup_path" || backup_result=$?
             ;;
         *)
             log_error "Unknown backup type: $db_type"
+            record_failure "$uuid" "$db_type" "Unknown backup type"
             return 1
             ;;
     esac
 
-    # Copy .env file on success
-    if [[ $? -eq 0 ]] && [[ -f "$env_file" ]]; then
+    # Copy .env file and track results
+    if [[ $backup_result -eq 0 ]] && [[ -f "$env_file" ]]; then
         cp "$env_file" "$backup_path/env.backup"
         ((BACKUP_COUNT++))
         BACKUP_PATHS+=("$backup_path")
+        record_success "$uuid" "$db_type"
+    else
+        record_failure "$uuid" "$db_type" "Backup failed"
     fi
 }
 
@@ -509,6 +547,9 @@ process_configured() {
         process_uuid "$uuid" "$db_type"
     done
 }
+
+# Signal start to healthcheck service
+ping_healthcheck "start"
 
 log "Starting backup"
 
@@ -571,3 +612,15 @@ if [[ ${#BACKUP_PATHS[@]} -gt 0 ]]; then
         fi
     done
 fi
+
+# Calculate duration and send notifications
+END_TIME=$(date +%s)
+DURATION=$((END_TIME - START_TIME))
+
+notify_backup_complete \
+    "backup-databases" \
+    "$SUCCESS_COUNT" \
+    "$FAIL_COUNT" \
+    "$BACKED_UP_LIST" \
+    "$ERROR_MESSAGES" \
+    "$DURATION"

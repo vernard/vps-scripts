@@ -201,6 +201,68 @@ RCLONE_REMOTE=gdrive:backups/vps      # Requires: rclone config
    RCLONE_REMOTE=gdrive:backups/vps
    ```
 
+## Notifications & Monitoring
+
+Backup scripts automatically send notifications based on your `.env` configuration.
+
+### Discord Notifications
+
+Get a summary embed after each backup run:
+
+```bash
+DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/xxx/yyy
+```
+
+**Setup:**
+1. Server Settings → Integrations → Webhooks → New Webhook
+2. Copy the webhook URL
+3. Add to `.env`
+
+### Email Notifications
+
+Receive detailed reports on failures (or optionally on every run):
+
+```bash
+SMTP_HOST=smtp.gmail.com          # Your SMTP server
+SMTP_PORT=587                     # TLS port (default: 587)
+SMTP_USER=your@email.com          # Your email
+SMTP_PASS=xxxx-xxxx-xxxx-xxxx     # App password (not your regular password!)
+EMAIL_TO=alerts@example.com       # Where to send notifications
+NOTIFY_EMAIL_ALWAYS=false         # Set to true to receive on success too
+```
+
+**Gmail Setup:**
+1. Enable 2FA on your Google account
+2. Go to Security → App passwords → Generate new app password
+3. Use the generated password for `SMTP_PASS`
+
+**Behavior:**
+- By default, emails are only sent on failures or partial failures
+- Set `NOTIFY_EMAIL_ALWAYS=true` to receive emails on every run
+
+### Healthcheck Monitoring (Dead Man's Switch)
+
+Use external monitoring to detect when cron jobs stop running:
+
+```bash
+HEALTHCHECK_URL=https://hc-ping.com/your-uuid-here
+```
+
+**How it works:**
+1. Script pings `/start` when backup begins
+2. Script pings success or `/fail` when complete
+3. If no ping received within expected window, the service alerts you
+
+**Recommended services:**
+- [healthchecks.io](https://healthchecks.io) - Free tier with 20 checks
+- [Uptime Kuma](https://github.com/louislam/uptime-kuma) - Self-hosted
+- [Cronitor](https://cronitor.io) - More features, paid
+
+**healthchecks.io setup:**
+1. Create account at healthchecks.io
+2. Add new check with your cron schedule (e.g., `0 2 * * *`)
+3. Copy the ping URL and add to `.env`
+
 ## CRON
 
 See `crontab.example` for sample schedules and timezone setup. Cron uses the system timezone - verify it's correct before scheduling:

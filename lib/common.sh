@@ -417,3 +417,242 @@ discover_running_uuids() {
 
     printf '%s\n' "${uuids[@]}"
 }
+
+# =============================================================================
+# NOTIFICATION FUNCTIONS
+# =============================================================================
+
+# Send Discord webhook notification
+# Args: title, description, color (decimal), [fields_json]
+# Color: 3066993 (green), 15158332 (red), 15844367 (yellow)
+send_discord() {
+    local webhook_url="${DISCORD_WEBHOOK_URL:-}"
+    [[ -z "$webhook_url" ]] && return 0
+
+    local title="$1"
+    local description="$2"
+    local color="${3:-3066993}"
+    local fields_json="${4:-[]}"
+    local hostname="${HOSTNAME:-$(hostname)}"
+
+    local payload=$(cat <<EOF
+{
+  "embeds": [{
+    "title": "$title",
+    "description": "$description",
+    "color": $color,
+    "fields": $fields_json,
+    "footer": {"text": "$hostname"},
+    "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  }]
+}
+EOF
+)
+
+    curl -s -H "Content-Type: application/json" -d "$payload" "$webhook_url" >/dev/null 2>&1
+}
+
+# Send email notification
+# Args: subject, body
+send_email() {
+    local smtp_host="${SMTP_HOST:-}"
+    [[ -z "$smtp_host" ]] && return 0
+
+    local subject="$1"
+    local body="$2"
+    local to="${EMAIL_TO:-}"
+    local from="${EMAIL_FROM:-vps-scripts@$(hostname)}"
+    local smtp_port="${SMTP_PORT:-587}"
+    local smtp_user="${SMTP_USER:-}"
+    local smtp_pass="${SMTP_PASS:-}"
+    local hostname="${HOSTNAME:-$(hostname)}"
+
+    [[ -z "$to" ]] && return 0
+
+    # Add hostname to subject
+    subject="[$hostname] $subject"
+
+    # Build email with headers
+    local email_content="Subject: $subject
+From: $from
+To: $to
+Content-Type: text/plain; charset=utf-8
+
+$body
+
+--
+Sent from $hostname at $(date '+%Y-%m-%d %H:%M:%S %Z')
+"
+
+    # Try different mail methods
+    if command -v msmtp &>/dev/null && [[ -n "$smtp_user" ]]; then
+        # Use msmtp with inline config
+        echo "$email_content" | msmtp \
+            --host="$smtp_host" \
+            --port="$smtp_port" \
+            --auth=on \
+            --user="$smtp_user" \
+            --password="$smtp_pass" \
+            --tls=on \
+            --from="$from" \
+            "$to" 2>/dev/null
+    elif command -v curl &>/dev/null && [[ -n "$smtp_user" ]]; then
+        # Use curl for SMTP
+        curl -s --url "smtps://${smtp_host}:${smtp_port}" \
+            --ssl-reqd \
+            --mail-from "$from" \
+            --mail-rcpt "$to" \
+            --user "${smtp_user}:${smtp_pass}" \
+            -T - <<< "$email_content" 2>/dev/null
+    elif command -v mail &>/dev/null; then
+        # Fall back to system mail
+        echo "$body" | mail -s "$subject" "$to" 2>/dev/null
+    elif command -v sendmail &>/dev/null; then
+        # Fall back to sendmail
+        echo "$email_content" | sendmail -t 2>/dev/null
+    fi
+}
+
+# Ping healthcheck URL (for dead man's switch monitoring)
+# Args: [status] - "start", "success", "fail", or empty for simple ping
+ping_healthcheck() {
+    local url="${HEALTHCHECK_URL:-}"
+    [[ -z "$url" ]] && return 0
+
+    local status="${1:-}"
+
+    case "$status" in
+        start) url="${url}/start" ;;
+        fail)  url="${url}/fail" ;;
+        success) ;; # Default ping URL
+        *) ;; # Simple ping
+    esac
+
+    curl -fsS --retry 3 --max-time 10 "$url" >/dev/null 2>&1
+}
+
+# Build JSON fields array for Discord embed
+# Args: pairs of "name" "value" (inline=true by default)
+build_discord_fields() {
+    local fields="["
+    local first=true
+
+    while [[ $# -ge 2 ]]; do
+        local name="$1"
+        local value="$2"
+        shift 2
+
+        [[ "$first" != "true" ]] && fields+=","
+        first=false
+
+        # Escape quotes and newlines in value
+        value=$(echo "$value" | sed 's/"/\\"/g' | tr '\n' ' ')
+
+        fields+="{\"name\":\"$name\",\"value\":\"$value\",\"inline\":true}"
+    done
+
+    fields+="]"
+    echo "$fields"
+}
+
+# Notify backup completion (sends to both Discord and Email based on config)
+# Args: script_name, success_count, fail_count, backed_up_list, error_messages, duration_seconds
+notify_backup_complete() {
+    local script_name="$1"
+    local success_count="${2:-0}"
+    local fail_count="${3:-0}"
+    local backed_up_list="${4:-}"
+    local error_messages="${5:-}"
+    local duration="${6:-0}"
+
+    local total=$((success_count + fail_count))
+    local status="success"
+    local color=3066993  # Green
+    local emoji="✅"
+
+    if [[ $fail_count -gt 0 && $success_count -eq 0 ]]; then
+        status="failure"
+        color=15158332  # Red
+        emoji="❌"
+    elif [[ $fail_count -gt 0 ]]; then
+        status="partial"
+        color=15844367  # Yellow
+        emoji="⚠️"
+    fi
+
+    # Format duration
+    local duration_str
+    if [[ $duration -ge 60 ]]; then
+        duration_str="$((duration / 60))m $((duration % 60))s"
+    else
+        duration_str="${duration}s"
+    fi
+
+    # === DISCORD (Summary) ===
+    if [[ -n "${DISCORD_WEBHOOK_URL:-}" ]]; then
+        local title="$emoji Backup ${status^}: $script_name"
+        local description="Completed at $(date '+%Y-%m-%d %H:%M:%S %Z')"
+
+        local fields=$(build_discord_fields \
+            "✓ Success" "$success_count" \
+            "✗ Failed" "$fail_count" \
+            "Duration" "$duration_str"
+        )
+
+        send_discord "$title" "$description" "$color" "$fields"
+    fi
+
+    # === EMAIL (Detailed on failure, or if NOTIFY_EMAIL_ALWAYS=true) ===
+    if [[ -n "${SMTP_HOST:-}" && -n "${EMAIL_TO:-}" ]]; then
+        local should_email=false
+
+        if [[ "$status" != "success" ]]; then
+            should_email=true
+        elif [[ "${NOTIFY_EMAIL_ALWAYS:-false}" == "true" ]]; then
+            should_email=true
+        fi
+
+        if [[ "$should_email" == "true" ]]; then
+            local subject="Backup ${status^}: $script_name ($success_count/$total succeeded)"
+
+            local body="BACKUP REPORT: $script_name
+============================================
+
+Status: ${status^^}
+Time: $(date '+%Y-%m-%d %H:%M:%S %Z')
+Duration: $duration_str
+
+SUMMARY
+-------
+Successful: $success_count
+Failed: $fail_count
+Total: $total
+"
+
+            if [[ -n "$backed_up_list" ]]; then
+                body+="
+BACKED UP
+---------
+$backed_up_list
+"
+            fi
+
+            if [[ -n "$error_messages" ]]; then
+                body+="
+ERRORS
+------
+$error_messages
+"
+            fi
+
+            send_email "$subject" "$body"
+        fi
+    fi
+
+    # === HEALTHCHECK PING ===
+    if [[ "$status" == "success" ]]; then
+        ping_healthcheck "success"
+    else
+        ping_healthcheck "fail"
+    fi
+}

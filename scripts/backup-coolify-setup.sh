@@ -12,11 +12,25 @@ COOLIFY_DIR="/data/coolify"
 BACKUP_BASE="${BACKUP_DIR:-/backups}/coolify-setup"
 TIMESTAMP=$(date '+%Y%m%d_%H%M%S')
 BACKUP_PATH="$BACKUP_BASE/$TIMESTAMP"
+START_TIME=$(date +%s)
+
+# Track for notifications
+SUCCESS_COUNT=0
+FAIL_COUNT=0
+BACKED_UP_LIST=""
+ERROR_MESSAGES=""
 
 if [[ ! -d "$COOLIFY_DIR" ]]; then
     log_error "Coolify directory not found: $COOLIFY_DIR"
+    ERROR_MESSAGES="Coolify directory not found: $COOLIFY_DIR"
+    FAIL_COUNT=1
+    END_TIME=$(date +%s)
+    notify_backup_complete "backup-coolify-setup" "$SUCCESS_COUNT" "$FAIL_COUNT" "$BACKED_UP_LIST" "$ERROR_MESSAGES" "$((END_TIME - START_TIME))"
     exit 1
 fi
+
+# Signal start to healthcheck service
+ping_healthcheck "start"
 
 log "Starting Coolify setup backup"
 
@@ -27,29 +41,47 @@ log "Backing up Coolify's internal database"
 COOLIFY_DB_CONTAINER=$(docker ps --format '{{.Names}}' | grep -E '^coolify-db' | head -1)
 
 if [[ -n "$COOLIFY_DB_CONTAINER" ]]; then
-    docker exec "$COOLIFY_DB_CONTAINER" pg_dumpall -U coolify | zstd > "$BACKUP_PATH/coolify-db.sql.zst" || {
+    if docker exec "$COOLIFY_DB_CONTAINER" pg_dumpall -U coolify | zstd > "$BACKUP_PATH/coolify-db.sql.zst"; then
+        ((SUCCESS_COUNT++))
+        BACKED_UP_LIST+="• Coolify PostgreSQL database"$'\n'
+    else
+        ((FAIL_COUNT++))
+        ERROR_MESSAGES+="• Failed to backup Coolify database"$'\n'
         log_error "Failed to backup Coolify database"
-    }
+    fi
 else
+    ((FAIL_COUNT++))
+    ERROR_MESSAGES+="• Coolify database container not found"$'\n'
     log_error "Coolify database container not found"
 fi
 
 # Backup Coolify configuration directory
 log "Backing up Coolify configuration"
-tar --zstd -cf "$BACKUP_PATH/coolify-data.tar.zst" \
+if tar --zstd -cf "$BACKUP_PATH/coolify-data.tar.zst" \
     --exclude='*/backups/*' \
     --exclude='*/logs/*' \
     --exclude='*/ssh/mux/*' \
-    -C /data coolify || {
+    -C /data coolify; then
+    ((SUCCESS_COUNT++))
+    BACKED_UP_LIST+="• Coolify configuration directory"$'\n'
+else
+    ((FAIL_COUNT++))
+    ERROR_MESSAGES+="• Failed to backup Coolify data directory"$'\n'
     log_error "Failed to backup Coolify data directory"
-}
+fi
 
 # Backup SSH keys if they exist
 if [[ -d "$COOLIFY_DIR/ssh" ]]; then
     log "Backing up SSH keys"
-    cp -r "$COOLIFY_DIR/ssh" "$BACKUP_PATH/ssh"
-    # Remove mux directory (contains runtime socket files)
-    rm -rf "$BACKUP_PATH/ssh/mux"
+    if cp -r "$COOLIFY_DIR/ssh" "$BACKUP_PATH/ssh"; then
+        # Remove mux directory (contains runtime socket files)
+        rm -rf "$BACKUP_PATH/ssh/mux"
+        ((SUCCESS_COUNT++))
+        BACKED_UP_LIST+="• SSH keys"$'\n'
+    else
+        ((FAIL_COUNT++))
+        ERROR_MESSAGES+="• Failed to backup SSH keys"$'\n'
+    fi
 fi
 
 # Create manifest with backup info
@@ -83,8 +115,14 @@ VPS_SCRIPTS_BACKUP_PATH="$VPS_SCRIPTS_BACKUP_BASE/$TIMESTAMP"
 if [[ -f "$PROJECT_ROOT/.env" ]]; then
     log "Backing up vps-scripts .env"
     mkdir -p "$VPS_SCRIPTS_BACKUP_PATH"
-    cp "$PROJECT_ROOT/.env" "$VPS_SCRIPTS_BACKUP_PATH/.env"
-    log "vps-scripts backup completed: $VPS_SCRIPTS_BACKUP_PATH"
+    if cp "$PROJECT_ROOT/.env" "$VPS_SCRIPTS_BACKUP_PATH/.env"; then
+        ((SUCCESS_COUNT++))
+        BACKED_UP_LIST+="• vps-scripts .env"$'\n'
+        log "vps-scripts backup completed: $VPS_SCRIPTS_BACKUP_PATH"
+    else
+        ((FAIL_COUNT++))
+        ERROR_MESSAGES+="• Failed to backup vps-scripts .env"$'\n'
+    fi
 else
     log "No vps-scripts .env found at $PROJECT_ROOT/.env"
 fi
@@ -97,3 +135,15 @@ cleanup_old_backups "$VPS_SCRIPTS_BACKUP_BASE"
 sync_to_remote "${BACKUP_DIR:-/backups}"
 
 log "All backups completed"
+
+# Calculate duration and send notifications
+END_TIME=$(date +%s)
+DURATION=$((END_TIME - START_TIME))
+
+notify_backup_complete \
+    "backup-coolify-setup" \
+    "$SUCCESS_COUNT" \
+    "$FAIL_COUNT" \
+    "$BACKED_UP_LIST" \
+    "$ERROR_MESSAGES" \
+    "$DURATION"
