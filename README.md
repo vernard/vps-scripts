@@ -13,6 +13,7 @@ cp .env.example .env
 
 | Script | Description |
 |--------|-------------|
+| `install-crontab.sh` | Interactive cron job installer with timezone configuration |
 | `backup-databases.sh` | Unified backup for MySQL, PostgreSQL, and SQLite databases |
 | `backup-coolify-setup.sh` | Full Coolify installation backup + vps-scripts .env |
 | `restore.sh` | Interactive restore for databases and file volumes |
@@ -276,20 +277,27 @@ HEALTHCHECK_URL=https://hc-ping.com/your-uuid-here
 
 ## CRON
 
-See `crontab.example` for sample schedules and timezone setup. Cron uses the system timezone - verify it's correct before scheduling:
+**Recommended:** Use the interactive installer:
 
 ```bash
-timedatectl                                       # Check current timezone
-sudo timedatectl set-timezone America/New_York   # Set if needed
-sudo systemctl restart cron                       # Apply changes
+./install-crontab.sh
 ```
 
-Install cron jobs with:
+The installer will:
+- Detect your installation directory automatically
+- Configure timezone settings
+- Let you choose which jobs to enable
+- Ask for file storage UUIDs if needed
 
-```bash
-crontab -e
-# Paste entries from crontab.example
-```
+**Options:**
+
+| Flag | Description |
+|------|-------------|
+| `--dry-run` | Show what would be installed without making changes |
+| `--remove` | Remove all vps-scripts cron jobs |
+| `-y, --yes` | Skip prompts (uses defaults) |
+
+**Manual installation:** See `crontab.example` for sample entries (update paths first).
 
 ## Backup Output
 

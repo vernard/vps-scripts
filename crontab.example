@@ -1,7 +1,15 @@
 # VPS Scripts Crontab Example
 #
-# To install: crontab -e and add the lines below
-# Make sure to update the path to match your installation
+# RECOMMENDED: Use the interactive installer instead of manual setup:
+#   ./install-crontab.sh
+#
+# The installer will:
+#   - Detect your installation directory automatically
+#   - Configure timezone settings
+#   - Let you choose which jobs to enable
+#   - Ask for file storage UUIDs if needed
+#
+# Manual installation: crontab -e and add entries below (update paths first!)
 
 # TIMEZONE SETUP (Important!)
 # Cron uses the system timezone. Verify yours is correct:
@@ -23,14 +31,18 @@
 #
 # Scripts automatically send notifications - no wrapper needed!
 
+# ============================================================================
+# MANUAL CRON ENTRIES (update /path/to/vps-scripts to your installation path)
+# ============================================================================
+
 # Update Cloudflare IP list with GitHub Actions IPs (every 6 hours)
-0 */6 * * * /root/Development/vps-scripts/scripts/update-cf-github-ips.sh
+0 */6 * * * /path/to/vps-scripts/scripts/update-cf-github-ips.sh
 
 # Backup databases - auto-discovers MySQL, PostgreSQL, SQLite (daily at 2 AM)
-0 2 * * * /root/Development/vps-scripts/scripts/backup-databases.sh
+0 2 * * * /path/to/vps-scripts/scripts/backup-databases.sh
 
 # Backup file storage - weekly on Sunday at 3 AM (replace with your UUIDs)
-# 0 3 * * 0 /root/Development/vps-scripts/scripts/backup-databases.sh --files-only uuid1 uuid2
+# 0 3 * * 0 /path/to/vps-scripts/scripts/backup-databases.sh --files-only uuid1 uuid2
 
 # Full Coolify setup backup (weekly on Sunday at 4 AM)
-0 4 * * 0 /root/Development/vps-scripts/scripts/backup-coolify-setup.sh
+0 4 * * 0 /path/to/vps-scripts/scripts/backup-coolify-setup.sh
