@@ -1,7 +1,8 @@
 #!/bin/bash
 # Backup entire Coolify installation for VPS migration
 
-set -e
+# Note: We don't use set -e here because we need to handle errors gracefully
+# and send notifications even when individual backup steps fail.
 
 # Load common utilities
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -41,14 +42,29 @@ log "Backing up Coolify's internal database"
 COOLIFY_DB_CONTAINER=$(docker ps --format '{{.Names}}' | grep -E '^coolify-db' | head -1)
 
 if [[ -n "$COOLIFY_DB_CONTAINER" ]]; then
-    if docker exec "$COOLIFY_DB_CONTAINER" pg_dumpall -U coolify | zstd > "$BACKUP_PATH/coolify-db.sql.zst"; then
-        ((SUCCESS_COUNT++))
-        BACKED_UP_LIST+="• Coolify PostgreSQL database"$'\n'
+    # Use a temp file and pipefail to catch pg_dumpall errors
+    DB_BACKUP_ERROR=""
+    DB_BACKUP_OUTPUT=$(mktemp)
+    if (set -o pipefail; docker exec "$COOLIFY_DB_CONTAINER" pg_dumpall -U coolify 2>&1 | zstd > "$BACKUP_PATH/coolify-db.sql.zst") 2>"$DB_BACKUP_OUTPUT"; then
+        # Verify the backup is not empty (more than just zstd header)
+        if [[ -f "$BACKUP_PATH/coolify-db.sql.zst" ]] && [[ $(stat -c%s "$BACKUP_PATH/coolify-db.sql.zst" 2>/dev/null || stat -f%z "$BACKUP_PATH/coolify-db.sql.zst" 2>/dev/null) -gt 100 ]]; then
+            ((SUCCESS_COUNT++))
+            BACKED_UP_LIST+="• Coolify PostgreSQL database"$'\n'
+            log "Coolify database backed up successfully"
+        else
+            ((FAIL_COUNT++))
+            ERROR_MESSAGES+="• Coolify database backup appears empty"$'\n'
+            log_error "Coolify database backup appears empty"
+            rm -f "$BACKUP_PATH/coolify-db.sql.zst"
+        fi
     else
+        DB_BACKUP_ERROR=$(cat "$DB_BACKUP_OUTPUT" 2>/dev/null | head -5)
         ((FAIL_COUNT++))
-        ERROR_MESSAGES+="• Failed to backup Coolify database"$'\n'
-        log_error "Failed to backup Coolify database"
+        ERROR_MESSAGES+="• Failed to backup Coolify database: ${DB_BACKUP_ERROR:-unknown error}"$'\n'
+        log_error "Failed to backup Coolify database: ${DB_BACKUP_ERROR:-unknown error}"
+        rm -f "$BACKUP_PATH/coolify-db.sql.zst"
     fi
+    rm -f "$DB_BACKUP_OUTPUT"
 else
     ((FAIL_COUNT++))
     ERROR_MESSAGES+="• Coolify database container not found"$'\n'
