@@ -646,8 +646,15 @@ DURATION=$((END_TIME - START_TIME))
 # Gather backup storage statistics
 get_backup_stats "$BACKUP_BASE"
 
+# Determine notification title based on mode
+if [[ "$FILES_ONLY" == true ]]; then
+    NOTIFY_SCRIPT_NAME="backup-files"
+else
+    NOTIFY_SCRIPT_NAME="backup-databases"
+fi
+
 notify_backup_complete \
-    "backup-databases" \
+    "$NOTIFY_SCRIPT_NAME" \
     "$SUCCESS_COUNT" \
     "$FAIL_COUNT" \
     "$BACKED_UP_LIST" \
