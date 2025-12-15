@@ -18,6 +18,7 @@ cp .env.example .env
 | `backup-coolify-setup.sh` | Full Coolify installation backup + vps-scripts .env |
 | `restore.sh` | Interactive restore for databases and file volumes |
 | `update-cf-github-ips.sh` | Updates Cloudflare IP list with GitHub Actions IPs |
+| `self-update.sh` | Auto-pull latest changes from GitHub |
 
 ## Configuration
 

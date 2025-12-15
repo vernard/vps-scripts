@@ -35,6 +35,9 @@
 # MANUAL CRON ENTRIES (update /path/to/vps-scripts to your installation path)
 # ============================================================================
 
+# Auto-update vps-scripts from GitHub (every 5 minutes)
+*/5 * * * * /path/to/vps-scripts/scripts/self-update.sh
+
 # Update Cloudflare IP list with GitHub Actions IPs (every 6 hours)
 0 */6 * * * /path/to/vps-scripts/scripts/update-cf-github-ips.sh
 
