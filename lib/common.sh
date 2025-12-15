@@ -141,18 +141,25 @@ cleanup_old_backups() {
 
 # Get backup storage statistics
 # Args: backup_dir
-# Outputs to global variables: BACKUP_TOTAL_SIZE, BACKUP_TOTAL_COUNT, BACKUP_OLDEST_DATE, BACKUP_BREAKDOWN
+# Outputs to global variables for databases and files separately
 get_backup_stats() {
     local backup_dir="$1"
-    local total_bytes=0
-    local total_count=0
+    local db_bytes=0
+    local db_count=0
+    local file_bytes=0
+    local file_count=0
     local oldest_timestamp=""
-    local breakdown=""
+    local db_services=""
+    local file_services=""
 
-    BACKUP_TOTAL_SIZE=""
-    BACKUP_TOTAL_COUNT=0
+    # Reset all output variables
+    BACKUP_DB_SIZE=""
+    BACKUP_DB_COUNT=0
+    BACKUP_FILE_SIZE=""
+    BACKUP_FILE_COUNT=0
     BACKUP_OLDEST_DATE=""
-    BACKUP_BREAKDOWN=""
+    BACKUP_DB_BREAKDOWN=""
+    BACKUP_FILE_BREAKDOWN=""
 
     [[ -d "$backup_dir" ]] || return
 
@@ -171,49 +178,84 @@ get_backup_stats() {
                     "SELECT name FROM services WHERE uuid='$uuid' UNION SELECT name FROM applications WHERE uuid='$uuid'" 2>/dev/null | tr -d ' \n')
             fi
 
-            # Calculate size for this UUID
-            local uuid_bytes=$(du -sb "$uuid_dir" 2>/dev/null | cut -f1)
-            uuid_bytes=${uuid_bytes:-0}
-            total_bytes=$((total_bytes + uuid_bytes))
+            # Display name (prefer name over uuid)
+            local display_name="${name:-$uuid}"
 
-            # Count backup sets (timestamp directories) and find oldest
-            local uuid_count=0
-            local uuid_oldest=""
+            # Track per-uuid stats separately for db and files
+            local uuid_db_bytes=0
+            local uuid_db_count=0
+            local uuid_file_bytes=0
+            local uuid_file_count=0
+
             for ts_dir in "$uuid_dir"/*/; do
                 [[ -d "$ts_dir" ]] || continue
-                ((uuid_count++))
-                ((total_count++))
                 local ts=$(basename "$ts_dir")
-                # Timestamp format: YYYYMMDD_HHMMSS
-                if [[ -z "$uuid_oldest" ]] || [[ "$ts" < "$uuid_oldest" ]]; then
-                    uuid_oldest="$ts"
-                fi
+
+                # Track oldest timestamp globally
                 if [[ -z "$oldest_timestamp" ]] || [[ "$ts" < "$oldest_timestamp" ]]; then
                     oldest_timestamp="$ts"
                 fi
+
+                # Check what type of backups exist in this timestamp dir
+                local has_db=false
+                local has_files=false
+
+                # Database backups: *.sql.zst or sqlite-data.tar.zst
+                if ls "$ts_dir"/*.sql.zst &>/dev/null || [[ -f "$ts_dir/sqlite-data.tar.zst" ]]; then
+                    has_db=true
+                fi
+
+                # File backups: *.tar.zst except sqlite-data.tar.zst
+                for f in "$ts_dir"/*.tar.zst; do
+                    [[ -f "$f" ]] || continue
+                    [[ "$(basename "$f")" == "sqlite-data.tar.zst" ]] && continue
+                    has_files=true
+                    break
+                done
+
+                # Calculate sizes for each type
+                if [[ "$has_db" == true ]]; then
+                    ((uuid_db_count++))
+                    for f in "$ts_dir"/*.sql.zst "$ts_dir/sqlite-data.tar.zst"; do
+                        [[ -f "$f" ]] || continue
+                        local fsize=$(stat -c%s "$f" 2>/dev/null || echo 0)
+                        uuid_db_bytes=$((uuid_db_bytes + fsize))
+                    done
+                fi
+
+                if [[ "$has_files" == true ]]; then
+                    ((uuid_file_count++))
+                    for f in "$ts_dir"/*.tar.zst; do
+                        [[ -f "$f" ]] || continue
+                        [[ "$(basename "$f")" == "sqlite-data.tar.zst" ]] && continue
+                        local fsize=$(stat -c%s "$f" 2>/dev/null || echo 0)
+                        uuid_file_bytes=$((uuid_file_bytes + fsize))
+                    done
+                fi
             done
 
-            # Format size
-            local uuid_size_human=$(numfmt --to=iec-i --suffix=B "$uuid_bytes" 2>/dev/null || echo "${uuid_bytes}B")
-
-            # Format oldest date for this UUID (YYYYMMDD_HHMMSS -> YYYY-MM-DD)
-            local uuid_oldest_formatted=""
-            if [[ -n "$uuid_oldest" ]]; then
-                uuid_oldest_formatted="${uuid_oldest:0:4}-${uuid_oldest:4:2}-${uuid_oldest:6:2}"
+            # Add to totals and build breakdown
+            if [[ $uuid_db_count -gt 0 ]]; then
+                db_bytes=$((db_bytes + uuid_db_bytes))
+                db_count=$((db_count + uuid_db_count))
+                local size_human=$(numfmt --to=iec-i --suffix=B "$uuid_db_bytes" 2>/dev/null || echo "${uuid_db_bytes}B")
+                db_services+="$display_name ($size_human, $uuid_db_count), "
             fi
 
-            # Build breakdown line
-            if [[ -n "$name" ]]; then
-                breakdown+="• $name ($uuid): $uuid_size_human, $uuid_count backups, oldest: $uuid_oldest_formatted"$'\n'
-            else
-                breakdown+="• $uuid: $uuid_size_human, $uuid_count backups, oldest: $uuid_oldest_formatted"$'\n'
+            if [[ $uuid_file_count -gt 0 ]]; then
+                file_bytes=$((file_bytes + uuid_file_bytes))
+                file_count=$((file_count + uuid_file_count))
+                local size_human=$(numfmt --to=iec-i --suffix=B "$uuid_file_bytes" 2>/dev/null || echo "${uuid_file_bytes}B")
+                file_services+="$display_name ($size_human, $uuid_file_count), "
             fi
         done
     done
 
-    # Format total size
-    BACKUP_TOTAL_SIZE=$(numfmt --to=iec-i --suffix=B "$total_bytes" 2>/dev/null || echo "${total_bytes}B")
-    BACKUP_TOTAL_COUNT=$total_count
+    # Format totals
+    BACKUP_DB_SIZE=$(numfmt --to=iec-i --suffix=B "$db_bytes" 2>/dev/null || echo "${db_bytes}B")
+    BACKUP_DB_COUNT=$db_count
+    BACKUP_FILE_SIZE=$(numfmt --to=iec-i --suffix=B "$file_bytes" 2>/dev/null || echo "${file_bytes}B")
+    BACKUP_FILE_COUNT=$file_count
 
     # Format oldest date (YYYYMMDD_HHMMSS -> YYYY-MM-DD)
     if [[ -n "$oldest_timestamp" ]]; then
@@ -222,7 +264,9 @@ get_backup_stats() {
         BACKUP_OLDEST_DATE="N/A"
     fi
 
-    BACKUP_BREAKDOWN="$breakdown"
+    # Remove trailing ", " from service lists
+    BACKUP_DB_BREAKDOWN="${db_services%, }"
+    BACKUP_FILE_BREAKDOWN="${file_services%, }"
 }
 
 # Read env var from a Coolify app's .env file (resolves variable references)
@@ -680,8 +724,10 @@ build_discord_fields() {
 }
 
 # Notify backup completion (sends to both Discord and Email based on config)
-# Args: script_name, success_count, fail_count, backed_up_list, error_messages, duration_seconds,
-#       total_size, backup_count, oldest_date, size_breakdown
+# Args: script_name, success_count, fail_count, backed_up_list, error_messages, duration_seconds
+# Also reads global variables set by get_backup_stats():
+#   BACKUP_DB_SIZE, BACKUP_DB_COUNT, BACKUP_FILE_SIZE, BACKUP_FILE_COUNT,
+#   BACKUP_OLDEST_DATE, BACKUP_DB_BREAKDOWN, BACKUP_FILE_BREAKDOWN
 notify_backup_complete() {
     local script_name="$1"
     local success_count="${2:-0}"
@@ -689,10 +735,6 @@ notify_backup_complete() {
     local backed_up_list="${4:-}"
     local error_messages="${5:-}"
     local duration="${6:-0}"
-    local total_size="${7:-}"
-    local backup_count="${8:-}"
-    local oldest_date="${9:-}"
-    local size_breakdown="${10:-}"
 
     local total=$((success_count + fail_count))
     local status="success"
@@ -742,14 +784,14 @@ notify_backup_complete() {
         fi
 
         # Add storage info if available
-        if [[ -n "$total_size" ]]; then
-            fields="${fields%]},{\"name\":\"💾 Total Size\",\"value\":\"$total_size\",\"inline\":true}]"
+        if [[ -n "$BACKUP_DB_SIZE" && "$BACKUP_DB_COUNT" -gt 0 ]]; then
+            fields="${fields%]},{\"name\":\"🗄️ Databases\",\"value\":\"$BACKUP_DB_SIZE ($BACKUP_DB_COUNT)\",\"inline\":true}]"
         fi
-        if [[ -n "$backup_count" ]]; then
-            fields="${fields%]},{\"name\":\"📁 Backups\",\"value\":\"$backup_count\",\"inline\":true}]"
+        if [[ -n "$BACKUP_FILE_SIZE" && "$BACKUP_FILE_COUNT" -gt 0 ]]; then
+            fields="${fields%]},{\"name\":\"📁 Files\",\"value\":\"$BACKUP_FILE_SIZE ($BACKUP_FILE_COUNT)\",\"inline\":true}]"
         fi
-        if [[ -n "$oldest_date" ]]; then
-            fields="${fields%]},{\"name\":\"📅 Oldest\",\"value\":\"$oldest_date\",\"inline\":true}]"
+        if [[ -n "$BACKUP_OLDEST_DATE" ]]; then
+            fields="${fields%]},{\"name\":\"📅 Oldest\",\"value\":\"$BACKUP_OLDEST_DATE\",\"inline\":true}]"
         fi
 
         if send_discord "$title" "$description" "$color" "$fields"; then
@@ -772,52 +814,66 @@ notify_backup_complete() {
         if [[ "$should_email" == "true" ]]; then
             local subject="Backup ${status^}: $script_name ($success_count/$total succeeded)"
 
-            local body="BACKUP REPORT: $script_name
-============================================
+            local body="
+BACKUP REPORT
+═════════════════════════════════════════════════════════
 
-Status: ${status^^}
-Time: $(date '+%Y-%m-%d %H:%M:%S %Z')
-Duration: $duration_str
+  Script:      $script_name
+  Status:      ${status^^}
+  Time:        $(date '+%Y-%m-%d %H:%M:%S %Z')
+  Duration:    $duration_str
 
-SUMMARY
--------
-Successful: $success_count
-Failed: $fail_count
-Total: $total
+RESULTS
+───────────────────────────────────────────────────────────
+
+  Successful:  $success_count
+  Failed:      $fail_count
+  Total:       $total
 "
 
             if [[ -n "$backed_up_list" ]]; then
                 body+="
 BACKED UP
----------
-$backed_up_list
-"
+───────────────────────────────────────────────────────────
+$backed_up_list"
             fi
 
             if [[ -n "$error_messages" ]]; then
                 body+="
 ERRORS
-------
-$error_messages
+───────────────────────────────────────────────────────────
+$error_messages"
+            fi
+
+            # Add database backup statistics if available
+            if [[ "$BACKUP_DB_COUNT" -gt 0 ]]; then
+                body+="
+DATABASE BACKUPS
+───────────────────────────────────────────────────────────
+  Total Size:  $BACKUP_DB_SIZE
+  Count:       $BACKUP_DB_COUNT
+
+  $BACKUP_DB_BREAKDOWN
 "
             fi
 
-            # Add storage statistics if available
-            if [[ -n "$total_size" ]]; then
+            # Add file backup statistics if available
+            if [[ "$BACKUP_FILE_COUNT" -gt 0 ]]; then
                 body+="
-BACKUP STORAGE
---------------
-Total Size: $total_size
-Total Backup Sets: $backup_count
-Oldest Backup: $oldest_date
+FILE BACKUPS
+───────────────────────────────────────────────────────────
+  Total Size:  $BACKUP_FILE_SIZE
+  Count:       $BACKUP_FILE_COUNT
+
+  $BACKUP_FILE_BREAKDOWN
 "
             fi
 
-            if [[ -n "$size_breakdown" ]]; then
+            if [[ -n "$BACKUP_OLDEST_DATE" && "$BACKUP_OLDEST_DATE" != "N/A" ]]; then
                 body+="
-PER-SERVICE BREAKDOWN
----------------------
-$size_breakdown"
+───────────────────────────────────────────────────────────
+  Oldest backup: $BACKUP_OLDEST_DATE
+"
             fi
 
             if send_email "$subject" "$body"; then

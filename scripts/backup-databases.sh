@@ -659,8 +659,4 @@ notify_backup_complete \
     "$FAIL_COUNT" \
     "$BACKED_UP_LIST" \
     "$ERROR_MESSAGES" \
-    "$DURATION" \
-    "$BACKUP_TOTAL_SIZE" \
-    "$BACKUP_TOTAL_COUNT" \
-    "$BACKUP_OLDEST_DATE" \
-    "$BACKUP_BREAKDOWN"
+    "$DURATION"
